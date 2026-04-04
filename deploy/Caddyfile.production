@@ -1,0 +1,21 @@
+# GemmaNet Production Caddyfile
+# Caddy automatically obtains and renews HTTPS certificates
+# Copy to /etc/caddy/Caddyfile after DNS is configured:
+#   sudo cp /home/cxwg0011/gemmanet/deploy/Caddyfile.production /etc/caddy/Caddyfile
+#   sudo systemctl restart caddy
+
+api.gemmanet.net {
+    reverse_proxy localhost:8800
+}
+
+dash.gemmanet.net {
+    reverse_proxy localhost:8800
+    # Dashboard is served from the same coordinator at /dashboard/
+    rewrite * /dashboard{uri}
+}
+
+www.gemmanet.net, gemmanet.net {
+    # Landing page - will be configured in task07
+    # For now, redirect to the API status page
+    respond "GemmaNet - Coming Soon. API: https://api.gemmanet.net" 200
+}

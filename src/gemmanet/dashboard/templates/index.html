@@ -1,0 +1,458 @@
+{% extends "base.html" %}
+
+{% block title %}GemmaNet Dashboard{% endblock %}
+
+{% block extra_style %}
+.api-key-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+    background: #242424;
+    padding: 12px 16px;
+    border-radius: 8px;
+}
+.api-key-bar label { color: #888; font-size: 0.85rem; white-space: nowrap; }
+.api-key-bar input {
+    flex: 1;
+    background: #181818;
+    border: 1px solid #333;
+    color: #e8e8e8;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.85rem;
+}
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+}
+.card {
+    background: #242424;
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid #333;
+}
+.card .label { color: #888; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+.card .value { font-size: 1.8rem; font-weight: 700; color: #7678E3; margin-top: 4px; }
+h2 {
+    font-size: 1.1rem;
+    margin-bottom: 16px;
+    color: #e8e8e8;
+}
+section { margin-bottom: 32px; }
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #242424;
+    border-radius: 8px;
+    overflow: hidden;
+}
+th, td {
+    padding: 10px 16px;
+    text-align: left;
+    border-bottom: 1px solid #333;
+    font-size: 0.9rem;
+}
+th { color: #888; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+td { color: #e8e8e8; }
+.status-online { color: #4ade80; }
+.status-offline { color: #f87171; }
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    background: #242424;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+.form-grid .full { grid-column: 1 / -1; }
+.form-grid label { display: block; color: #888; font-size: 0.8rem; margin-bottom: 4px; }
+.form-grid select,
+.form-grid textarea,
+.form-grid input[type="text"] {
+    width: 100%;
+    background: #181818;
+    border: 1px solid #333;
+    color: #e8e8e8;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: system-ui, sans-serif;
+    font-size: 0.9rem;
+}
+.form-grid textarea { min-height: 80px; resize: vertical; }
+.btn {
+    background: #7678E3;
+    color: #fff;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.btn:hover { background: #5b5dc7; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#result-area {
+    margin-top: 16px;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 16px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    min-height: 60px;
+    display: none;
+}
+.empty-state { color: #888; text-align: center; padding: 24px; font-size: 0.9rem; }
+
+/* Feedback button & modal */
+.feedback-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #7678E3;
+    color: #fff;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 24px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(118,120,227,0.4);
+    z-index: 1000;
+}
+.feedback-btn:hover { background: #5b5dc7; }
+.fb-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 1001;
+    align-items: center;
+    justify-content: center;
+}
+.fb-overlay.active { display: flex; }
+.fb-modal {
+    background: #242424;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 24px;
+    width: 420px;
+    max-width: 90vw;
+    position: relative;
+}
+.fb-modal h3 { margin: 0 0 16px; color: #e8e8e8; font-size: 1.1rem; }
+.fb-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+.fb-close:hover { color: #e8e8e8; }
+.fb-field { margin-bottom: 14px; }
+.fb-field label { display: block; color: #888; font-size: 0.8rem; margin-bottom: 4px; }
+.fb-field select,
+.fb-field textarea,
+.fb-field input {
+    width: 100%;
+    background: #181818;
+    border: 1px solid #333;
+    color: #e8e8e8;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: system-ui, sans-serif;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+}
+.fb-field textarea { min-height: 100px; resize: vertical; }
+.fb-msg { margin-top: 10px; font-size: 0.85rem; }
+.fb-msg.success { color: #4ade80; }
+.fb-msg.error { color: #f87171; }
+{% endblock %}
+
+{% block content %}
+<div class="api-key-bar">
+    <label for="api-key">API Key:</label>
+    <input type="text" id="api-key" placeholder="Enter your API key" />
+</div>
+
+<div class="metrics">
+    <div class="card">
+        <div class="label">Online Nodes</div>
+        <div class="value" id="m-nodes">-</div>
+    </div>
+    <div class="card">
+        <div class="label">Tasks Today</div>
+        <div class="value" id="m-tasks">-</div>
+    </div>
+    <div class="card">
+        <div class="label">Your Balance</div>
+        <div class="value" id="m-balance">-</div>
+    </div>
+    <div class="card">
+        <div class="label">Network Version</div>
+        <div class="value" id="m-version">-</div>
+    </div>
+</div>
+
+<section>
+    <h2>Online Nodes</h2>
+    <table>
+        <thead><tr><th>Name</th><th>Capabilities</th><th>Languages</th><th>Status</th></tr></thead>
+        <tbody id="nodes-body">
+            <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h2>Quick Test</h2>
+    <div class="form-grid">
+        <div>
+            <label for="task-type">Task Type</label>
+            <select id="task-type">
+                <option value="echo">echo</option>
+                <option value="translate">translate</option>
+            </select>
+        </div>
+        <div>
+            <label for="task-params">Params (JSON)</label>
+            <input type="text" id="task-params" placeholder='{"source_lang":"en","target_lang":"zh"}' />
+        </div>
+        <div class="full">
+            <label for="task-content">Content</label>
+            <textarea id="task-content" placeholder="Enter content to process..."></textarea>
+        </div>
+        <div class="full">
+            <button class="btn" id="submit-btn" onclick="submitTask()">Submit Request</button>
+        </div>
+    </div>
+    <div id="result-area"></div>
+</section>
+
+<section>
+    <h2>Your Transactions</h2>
+    <table>
+        <thead><tr><th>ID</th><th>Type</th><th>Amount</th><th>Task ID</th><th>Time</th></tr></thead>
+        <tbody id="txn-body">
+            <tr><td colspan="5" class="empty-state">Enter an API key to view transactions</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<button class="feedback-btn" onclick="openFeedback()">Feedback</button>
+<div class="fb-overlay" id="fb-overlay">
+    <div class="fb-modal">
+        <button class="fb-close" onclick="closeFeedback()">&times;</button>
+        <h3>Send Feedback</h3>
+        <div class="fb-field">
+            <label for="fb-type">Type</label>
+            <select id="fb-type">
+                <option value="bug">Bug</option>
+                <option value="feature">Feature Request</option>
+                <option value="other">Other</option>
+            </select>
+        </div>
+        <div class="fb-field">
+            <label for="fb-message">Message</label>
+            <textarea id="fb-message" placeholder="Tell us what you think..."></textarea>
+        </div>
+        <div class="fb-field">
+            <label for="fb-email">Email (optional)</label>
+            <input type="email" id="fb-email" placeholder="your@email.com (optional)" />
+        </div>
+        <button class="btn" onclick="submitFeedback()">Submit</button>
+        <div class="fb-msg" id="fb-msg"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BASE = '{{ coordinator_url }}';
+
+// Persist API key in localStorage
+const apiKeyInput = document.getElementById('api-key');
+apiKeyInput.value = localStorage.getItem('gemmanet_api_key') || '';
+apiKeyInput.addEventListener('input', () => {
+    localStorage.setItem('gemmanet_api_key', apiKeyInput.value);
+    loadBalance();
+    loadHistory();
+});
+
+function getHeaders() {
+    const key = apiKeyInput.value.trim();
+    const h = { 'Content-Type': 'application/json' };
+    if (key) h['Authorization'] = 'Bearer ' + key;
+    return h;
+}
+
+async function loadStatus() {
+    try {
+        const r = await fetch(BASE + '/api/v1/status');
+        const d = await r.json();
+        document.getElementById('m-nodes').textContent = d.online_nodes;
+        document.getElementById('m-tasks').textContent = d.total_tasks_today;
+        document.getElementById('m-version').textContent = d.version;
+    } catch(e) {
+        console.error('Status error:', e);
+    }
+}
+
+async function loadNodes() {
+    try {
+        const r = await fetch(BASE + '/api/v1/nodes');
+        const nodes = await r.json();
+        const tbody = document.getElementById('nodes-body');
+        if (nodes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No nodes online</td></tr>';
+            return;
+        }
+        tbody.innerHTML = nodes.map(n => `<tr>
+            <td>${n.name || n.node_id}</td>
+            <td>${(n.capabilities || []).join(', ')}</td>
+            <td>${(n.languages || []).join(', ')}</td>
+            <td class="status-online">● Online</td>
+        </tr>`).join('');
+    } catch(e) {
+        console.error('Nodes error:', e);
+    }
+}
+
+async function loadBalance() {
+    const key = apiKeyInput.value.trim();
+    if (!key) { document.getElementById('m-balance').textContent = '-'; return; }
+    try {
+        const r = await fetch(BASE + '/api/v1/balance', { headers: getHeaders() });
+        const d = await r.json();
+        document.getElementById('m-balance').textContent = d.balance ?? 0;
+    } catch(e) {
+        document.getElementById('m-balance').textContent = '-';
+    }
+}
+
+async function loadHistory() {
+    const key = apiKeyInput.value.trim();
+    const tbody = document.getElementById('txn-body');
+    if (!key) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Enter an API key to view transactions</td></tr>';
+        return;
+    }
+    try {
+        const r = await fetch(BASE + '/api/v1/history?limit=10', { headers: getHeaders() });
+        const txns = await r.json();
+        if (txns.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No transactions yet</td></tr>';
+            return;
+        }
+        tbody.innerHTML = txns.map(t => `<tr>
+            <td style="font-family:monospace;font-size:0.8rem">${(t.id || '').slice(0, 8)}</td>
+            <td>${t.tx_type || t.type || '-'}</td>
+            <td style="font-weight:600;color:${t.amount >= 0 ? '#4ade80' : '#f87171'}">${t.amount >= 0 ? '+' : ''}${t.amount}</td>
+            <td style="font-family:monospace;font-size:0.8rem">${(t.task_id || '-').slice(0, 8)}</td>
+            <td style="color:#888">${t.timestamp || t.created_at || '-'}</td>
+        </tr>`).join('');
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Error loading transactions</td></tr>';
+    }
+}
+
+async function submitTask() {
+    const key = apiKeyInput.value.trim();
+    if (!key) { alert('Please enter an API key'); return; }
+    const btn = document.getElementById('submit-btn');
+    const area = document.getElementById('result-area');
+    btn.disabled = true;
+    area.style.display = 'block';
+    area.textContent = 'Processing...';
+
+    const taskType = document.getElementById('task-type').value;
+    const content = document.getElementById('task-content').value;
+    let params = {};
+    try {
+        const raw = document.getElementById('task-params').value.trim();
+        if (raw) params = JSON.parse(raw);
+    } catch(e) {
+        area.textContent = 'Error: Invalid JSON in params';
+        btn.disabled = false;
+        return;
+    }
+
+    try {
+        const r = await fetch(BASE + '/api/v1/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_type: taskType, content, params, api_key: key })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            area.textContent = 'Error: ' + (d.detail || JSON.stringify(d));
+        } else {
+            area.textContent = `Status: ${d.status}\nResult: ${d.result}\nCost: ${d.cost} credits\nNode: ${d.node_id || 'N/A'}\nTime: ${d.processing_time_ms}ms`;
+        }
+        loadBalance();
+        loadHistory();
+    } catch(e) {
+        area.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+}
+
+// Initial load
+loadStatus();
+loadNodes();
+loadBalance();
+loadHistory();
+
+// Auto-refresh every 10 seconds
+setInterval(() => { loadStatus(); loadNodes(); }, 10000);
+
+// Feedback modal
+function openFeedback() { document.getElementById('fb-overlay').classList.add('active'); }
+function closeFeedback() {
+    document.getElementById('fb-overlay').classList.remove('active');
+    document.getElementById('fb-msg').textContent = '';
+}
+
+async function submitFeedback() {
+    const msg = document.getElementById('fb-message').value.trim();
+    if (!msg) { showFbMsg('Please enter a message', 'error'); return; }
+    const payload = {
+        type: document.getElementById('fb-type').value,
+        message: msg,
+        email: document.getElementById('fb-email').value.trim() || null,
+    };
+    const headers = { 'Content-Type': 'application/json' };
+    const key = apiKeyInput.value.trim();
+    if (key) headers['Authorization'] = 'Bearer ' + key;
+
+    try {
+        const r = await fetch(BASE + '/api/v1/feedback', {
+            method: 'POST', headers, body: JSON.stringify(payload),
+        });
+        if (!r.ok) { const d = await r.json(); showFbMsg(d.detail || 'Error', 'error'); return; }
+        showFbMsg('Thank you for your feedback!', 'success');
+        document.getElementById('fb-message').value = '';
+        document.getElementById('fb-email').value = '';
+        setTimeout(closeFeedback, 2000);
+    } catch(e) {
+        showFbMsg('Network error: ' + e.message, 'error');
+    }
+}
+
+function showFbMsg(text, type) {
+    const el = document.getElementById('fb-msg');
+    el.textContent = text;
+    el.className = 'fb-msg ' + type;
+}
+</script>
+{% endblock %}

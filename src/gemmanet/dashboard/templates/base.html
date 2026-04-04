@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}GemmaNet Dashboard{% endblock %}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #181818;
+            color: #e8e8e8;
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        a { color: #7678E3; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        header {
+            background: #242424;
+            border-bottom: 1px solid #333;
+            padding: 0 24px;
+        }
+        .header-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 56px;
+        }
+        .logo {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #7678E3;
+            letter-spacing: -0.5px;
+        }
+        .logo span { color: #e8e8e8; }
+        nav a {
+            color: #888;
+            margin-left: 24px;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+        nav a:hover, nav a.active { color: #e8e8e8; text-decoration: none; }
+        main {
+            flex: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+            width: 100%;
+        }
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+            font-size: 0.8rem;
+            border-top: 1px solid #333;
+            margin-top: auto;
+        }
+        {% block extra_style %}{% endblock %}
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-inner">
+            <div class="logo">Gemma<span>Net</span></div>
+            <nav>
+                <a href="/dashboard/" class="active">Dashboard</a>
+                <a href="/docs">API Docs</a>
+            </nav>
+        </div>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        GemmaNet v0.1.0 &mdash; The Operating System for the AI Economy
+    </footer>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

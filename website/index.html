@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GemmaNet - The Operating System for the AI Economy</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      line-height: 1.6;
+    }
+    a { color: #7678E3; text-decoration: none; }
+    a:hover { color: #9597f0; }
+
+    /* Nav */
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem 2rem;
+    }
+    .logo { font-size: 1.4rem; font-weight: 700; color: #fff; }
+    .logo span { color: #7678E3; }
+    .nav-links { display: flex; gap: 2rem; font-size: 0.95rem; }
+    .nav-links a { color: #aaa; }
+    .nav-links a:hover { color: #fff; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 5rem 2rem 4rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .hero h1 {
+      font-size: 3.2rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.15;
+      margin-bottom: 1.2rem;
+    }
+    .hero p {
+      font-size: 1.2rem;
+      color: #999;
+      max-width: 600px;
+      margin: 0 auto 2rem;
+    }
+    .btn-group { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 2rem; }
+    .btn {
+      display: inline-block;
+      padding: 0.75rem 1.8rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: #7678E3; color: #fff; }
+    .btn-secondary { background: #222; color: #ccc; border: 1px solid #333; }
+    .install-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: #161616;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 0.7rem 1.2rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.95rem;
+      color: #ccc;
+      cursor: pointer;
+    }
+    .install-box:hover { border-color: #7678E3; }
+    .install-box .copy-icon { color: #666; font-size: 0.85rem; }
+
+    /* Section shared */
+    section { max-width: 1100px; margin: 0 auto; padding: 4rem 2rem; }
+    .section-title {
+      text-align: center;
+      font-size: 2rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 2.5rem;
+    }
+
+    /* Feature Cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+    .card {
+      background: #161616;
+      border: 1px solid #222;
+      border-radius: 12px;
+      padding: 2rem;
+      transition: border-color 0.2s;
+    }
+    .card:hover { border-color: #7678E3; }
+    .card-icon { font-size: 2rem; margin-bottom: 1rem; }
+    .card h3 { font-size: 1.2rem; color: #fff; margin-bottom: 0.5rem; }
+    .card p { color: #999; font-size: 0.95rem; }
+
+    /* Code Block */
+    .code-section { text-align: center; }
+    .code-block {
+      background: #161616;
+      border: 1px solid #222;
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: left;
+      max-width: 650px;
+      margin: 0 auto;
+      overflow-x: auto;
+    }
+    .code-block pre {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: #ccc;
+    }
+    .kw { color: #c678dd; }
+    .fn { color: #61afef; }
+    .str { color: #98c379; }
+    .cm { color: #5c6370; font-style: italic; }
+
+    /* Why Section */
+    .why-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+    .why-item h3 { color: #7678E3; font-size: 1.1rem; margin-bottom: 0.4rem; }
+    .why-item p { color: #999; font-size: 0.95rem; }
+
+    /* CTA */
+    .cta {
+      text-align: center;
+      padding: 5rem 2rem;
+      background: linear-gradient(180deg, transparent, #0f0f1a 50%, transparent);
+    }
+    .cta h2 { font-size: 2.2rem; color: #fff; margin-bottom: 1.5rem; }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid #1a1a1a;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    .footer-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .footer-top span { color: #666; font-size: 0.9rem; }
+    .footer-links { display: flex; gap: 1.5rem; }
+    .footer-links a { color: #666; font-size: 0.9rem; }
+    .footer-links a:hover { color: #aaa; }
+    .footer-disclaimer { color: #444; font-size: 0.8rem; text-align: center; margin-top: 1rem; }
+
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 2.2rem; }
+      .hero p { font-size: 1rem; }
+      nav { padding: 1rem; }
+      .nav-links { gap: 1rem; font-size: 0.85rem; }
+      section { padding: 3rem 1.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav>
+    <div class="logo">Gemma<span>Net</span></div>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="#">GitHub</a>
+      <a href="/dashboard/">Dashboard</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <h1>The Operating System for the AI Economy</h1>
+    <p>Turn any AI model into a node in a global network. Provide services. Consume services. Earn credits.</p>
+    <div class="btn-group">
+      <a href="/docs/quickstart/" class="btn btn-primary">Get Started</a>
+      <a href="#" class="btn btn-secondary">View on GitHub</a>
+    </div>
+    <div class="install-box" onclick="navigator.clipboard.writeText('pip install gemmanet')">
+      <code>pip install gemmanet</code>
+      <span class="copy-icon" title="Click to copy">&#x2398;</span>
+    </div>
+  </section>
+
+  <!-- Feature Cards -->
+  <section>
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">&#x1F5A5;</div>
+        <h3>Provide AI Services</h3>
+        <p>10 lines of Python to turn your model into a service on the network.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#x26A1;</div>
+        <h3>Consume AI Services</h3>
+        <p>5 lines of Python to access any AI capability on the network.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">&#x1FA99;</div>
+        <h3>Earn Credits</h3>
+        <p>Your node earns GemmaCredits for every request it processes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Code Example -->
+  <section class="code-section">
+    <h2 class="section-title">Create a Node in 10 Lines</h2>
+    <div class="code-block">
+      <pre><span class="kw">from</span> gemmanet <span class="kw">import</span> Node
+
+<span class="kw">def</span> <span class="fn">my_handler</span>(content, **params):
+    <span class="kw">return</span> my_model.generate(content)  <span class="cm"># Any model</span>
+
+node = <span class="fn">Node</span>(
+    name=<span class="str">'my-service'</span>,
+    capabilities=[<span class="str">'translate'</span>, <span class="str">'summarize'</span>],
+)
+node.<span class="fn">register_handler</span>(<span class="str">'translate'</span>, my_handler)
+node.<span class="fn">start</span>()  <span class="cm"># Join the global network</span></pre>
+    </div>
+  </section>
+
+  <!-- Why GemmaNet -->
+  <section>
+    <h2 class="section-title">Why GemmaNet</h2>
+    <div class="why-grid">
+      <div class="why-item">
+        <h3>Model Agnostic</h3>
+        <p>Works with Gemma, Llama, Qwen, OpenAI, or any model. Bring whatever you have.</p>
+      </div>
+      <div class="why-item">
+        <h3>Open Source</h3>
+        <p>Apache 2.0 licensed. Run it, modify it, deploy it. No vendor lock-in.</p>
+      </div>
+      <div class="why-item">
+        <h3>Built for Developers</h3>
+        <p>SDK, API docs, examples. Start building in 10 minutes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta">
+    <h2>Ready to build?</h2>
+    <div class="btn-group">
+      <a href="/docs/quickstart/" class="btn btn-primary">Read the Quick Start</a>
+      <a href="#" class="btn btn-secondary">View on GitHub</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-top">
+      <span>GemmaNet &mdash; Apache 2.0 License</span>
+      <div class="footer-links">
+        <a href="/docs/">Docs</a>
+        <a href="#">GitHub</a>
+        <a href="/dashboard/">Dashboard</a>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Gemma is a trademark of Google LLC. GemmaNet is not affiliated with Google.</p>
+  </footer>
+
+</body>
+</html>

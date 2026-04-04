@@ -1,0 +1,29 @@
+gemmanet.net, www.gemmanet.net {
+    handle /docs/* {
+        uri strip_prefix /docs
+        root * /home/cxwg0011/gemmanet/site
+        file_server
+    }
+    handle /dashboard/* {
+        reverse_proxy localhost:8800
+    }
+    handle /api/* {
+        reverse_proxy localhost:8800
+    }
+    handle /ws/* {
+        reverse_proxy localhost:8800
+    }
+    handle {
+        root * /home/cxwg0011/gemmanet/website
+        file_server
+    }
+}
+
+api.gemmanet.net {
+    reverse_proxy localhost:8800
+}
+
+dash.gemmanet.net {
+    reverse_proxy localhost:8800
+    rewrite * /dashboard{uri}
+}

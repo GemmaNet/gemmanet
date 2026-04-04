@@ -1,0 +1,33 @@
+site_name: GemmaNet Documentation
+site_url: https://gemmanet.net/docs/
+site_description: The Operating System for the AI Economy
+repo_url: https://github.com/gemmanet-ai/gemmanet
+repo_name: gemmanet-ai/gemmanet
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: deep purple
+    accent: deep purple
+  features:
+    - content.code.copy
+    - navigation.instant
+    - navigation.sections
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - API Reference: api_reference.md
+  - Architecture: architecture.md
+  - Examples: examples.md
+  - Terms of Service: terms.md
+  - Privacy Policy: privacy.md
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - admonition
+  - toc:
+      permalink: true
