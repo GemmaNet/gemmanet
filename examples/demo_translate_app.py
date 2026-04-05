@@ -8,15 +8,19 @@ import os
 import time
 
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def start_process(cmd, label):
     """Start a subprocess with proper env."""
     print(f'Starting {label}...')
+    venv = os.path.join(PROJECT_ROOT, '.venv')
     env = {
         **os.environ,
-        'VIRTUAL_ENV': '/home/cxwg0011/gemmanet/.venv',
-        'PATH': '/home/cxwg0011/gemmanet/.venv/bin:' + os.environ['PATH'],
+        'VIRTUAL_ENV': venv,
+        'PATH': os.path.join(venv, 'bin') + ':' + os.environ['PATH'],
     }
-    return subprocess.Popen(cmd, cwd='/home/cxwg0011/gemmanet', env=env)
+    return subprocess.Popen(cmd, cwd=PROJECT_ROOT, env=env)
 
 
 def main():

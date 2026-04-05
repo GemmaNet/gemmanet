@@ -1,7 +1,7 @@
 # GemmaNet Production Caddyfile
 # Caddy automatically obtains and renews HTTPS certificates
 # Copy to /etc/caddy/Caddyfile after DNS is configured:
-#   sudo cp /home/cxwg0011/gemmanet/deploy/Caddyfile.production /etc/caddy/Caddyfile
+#   sudo cp /opt/gemmanet/deploy/Caddyfile.production /etc/caddy/Caddyfile
 #   sudo systemctl restart caddy
 
 api.gemmanet.net {

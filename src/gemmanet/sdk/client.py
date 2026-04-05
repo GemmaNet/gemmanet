@@ -1,4 +1,7 @@
 """Client class - developers use this to consume AI services."""
+import json
+from typing import Iterator
+
 import httpx
 
 from gemmanet.sdk.models import TaskResult, NodeInfo
@@ -75,6 +78,26 @@ class Client:
                 raise TaskTimeoutError('Request timed out')
             _check_response(resp)
             return TaskResult.model_validate(resp.json())
+
+    def request_stream(self, task: str, content: str,
+                       params: dict | None = None) -> Iterator[str]:
+        """Send request and receive streaming response."""
+        messages = [{'role': 'user', 'content': content}]
+        with self._client.stream(
+            'POST', '/v1/chat/completions',
+            json={'model': f'gemmanet/{task}', 'messages': messages,
+                  'stream': True},
+        ) as response:
+            _check_response(response)
+            for line in response.iter_lines():
+                if line.startswith('data: '):
+                    data = line[6:]
+                    if data == '[DONE]':
+                        return
+                    chunk = json.loads(data)
+                    chunk_content = chunk['choices'][0]['delta'].get('content', '')
+                    if chunk_content:
+                        yield chunk_content
 
     def balance(self) -> int:
         resp = self._client.get('/api/v1/balance')

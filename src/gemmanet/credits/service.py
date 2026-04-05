@@ -34,23 +34,29 @@ class CreditService:
 
     def get_balance(self, node_id: str) -> int:
         with SessionLocal() as session:
-            account = session.query(Account).filter_by(node_id=node_id).first()
-            if account:
-                return account.balance
-            return 0
+            try:
+                account = session.query(Account).filter_by(node_id=node_id).first()
+                return account.balance if account else 0
+            except Exception:
+                session.rollback()
+                return 0
 
     def get_account(self, node_id: str) -> dict | None:
         with SessionLocal() as session:
-            account = session.query(Account).filter_by(node_id=node_id).first()
-            if not account:
+            try:
+                account = session.query(Account).filter_by(node_id=node_id).first()
+                if not account:
+                    return None
+                return {
+                    'node_id': account.node_id,
+                    'balance': account.balance,
+                    'frozen': account.frozen,
+                    'total_earned': account.total_earned,
+                    'total_spent': account.total_spent,
+                }
+            except Exception:
+                session.rollback()
                 return None
-            return {
-                'node_id': account.node_id,
-                'balance': account.balance,
-                'frozen': account.frozen,
-                'total_earned': account.total_earned,
-                'total_spent': account.total_spent,
-            }
 
     def charge(self, from_node: str, amount: int, task_id: str) -> bool:
         with SessionLocal() as session:
@@ -128,21 +134,25 @@ class CreditService:
 
     def get_transactions(self, node_id: str, limit: int = 20) -> list[dict]:
         with SessionLocal() as session:
-            txns = (session.query(Transaction)
-                    .filter((Transaction.from_node == node_id) |
-                            (Transaction.to_node == node_id))
-                    .order_by(Transaction.created_at.desc())
-                    .limit(limit)
-                    .all())
-            return [{
-                'tx_id': t.tx_id,
-                'from_node': t.from_node,
-                'to_node': t.to_node,
-                'amount': t.amount,
-                'tx_type': t.tx_type,
-                'task_id': t.task_id,
-                'created_at': str(t.created_at) if t.created_at else None,
-            } for t in txns]
+            try:
+                txns = (session.query(Transaction)
+                        .filter((Transaction.from_node == node_id) |
+                                (Transaction.to_node == node_id))
+                        .order_by(Transaction.created_at.desc())
+                        .limit(limit)
+                        .all())
+                return [{
+                    'tx_id': t.tx_id,
+                    'from_node': t.from_node,
+                    'to_node': t.to_node,
+                    'amount': t.amount,
+                    'tx_type': t.tx_type,
+                    'task_id': t.task_id,
+                    'created_at': str(t.created_at) if t.created_at else None,
+                } for t in txns]
+            except Exception:
+                session.rollback()
+                return []
 
     def process_task_payment(self, from_node: str, to_node: str,
                              amount: int, task_id: str) -> bool:

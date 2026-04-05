@@ -21,16 +21,18 @@ class WSConnectionManager:
         self.node_info.pop(node_id, None)
         logger.info(f'Node disconnected: {node_id}')
 
-    async def send_to_node(self, node_id: str, message: str):
-        ws = self.connections.get(node_id)
-        if ws is None:
-            logger.error(f'Node not found: {node_id}')
-            return
+    async def send_to_node(self, node_id: str, message: str) -> bool:
         try:
+            ws = self.connections.get(node_id)
+            if ws is None:
+                logger.warning(f'No connection for {node_id}')
+                return False
             await ws.send_text(message)
+            return True
         except Exception as e:
-            logger.error(f'Failed to send to {node_id}: {e}')
+            logger.error(f'Send to {node_id} failed: {e}')
             await self.disconnect(node_id)
+            return False
 
     async def broadcast(self, message: str, exclude: str | None = None):
         for node_id in list(self.connections):

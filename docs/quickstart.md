@@ -9,7 +9,8 @@ GemmaNet is a decentralized platform that connects AI model providers with consu
 From source:
 
 ```bash
-cd /home/cxwg0011/gemmanet
+git clone https://github.com/GemmaNet/gemmanet.git
+cd gemmanet
 pip install -e .
 ```
 
@@ -24,7 +25,7 @@ pip install gemmanet
 The coordinator is the central hub that routes requests between clients and nodes.
 
 ```bash
-cd /home/cxwg0011/gemmanet && source .venv/bin/activate
+cd gemmanet && source .venv/bin/activate
 python -m uvicorn gemmanet.coordinator.server:app --host 0.0.0.0 --port 8800
 ```
 
@@ -79,6 +80,41 @@ The translation demo starts a coordinator, 3 specialized nodes, and sends reques
 ```bash
 python examples/demo_translate_app.py
 ```
+
+## Use with OpenAI SDK
+
+Any app using the OpenAI Python SDK can use GemmaNet by changing the base URL and API key:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url='https://api.gemmanet.net/v1', api_key='gn_your_key')
+response = client.chat.completions.create(
+    model='gemmanet/auto',
+    messages=[{'role': 'user', 'content': 'Hello, GemmaNet!'}],
+)
+print(response.choices[0].message.content)
+```
+
+## Use with Ollama
+
+If you have Ollama installed locally, you can connect it to GemmaNet
+in 3 lines:
+
+```python
+from gemmanet import Node
+from gemmanet.integrations.ollama import OllamaHandler
+
+handler = OllamaHandler(model='gemma2:9b')  # or any Ollama model
+node = Node(name='my-ollama-node', capabilities=['chat'])
+node.register_handler('chat', handler)
+node.start()
+```
+
+Available specialized handlers:
+- `OllamaHandler` - General chat/completion
+- `OllamaTranslateHandler` - Translation with language params
+- `OllamaSummarizeHandler` - Text summarization
+- `OllamaCodeHandler` - Code generation (defaults to codellama)
 
 ## Next Steps
 

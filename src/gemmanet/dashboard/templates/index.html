@@ -60,6 +60,9 @@ th { color: #888; font-weight: 600; font-size: 0.8rem; text-transform: uppercase
 td { color: #e8e8e8; }
 .status-online { color: #4ade80; }
 .status-offline { color: #f87171; }
+.rep-high { color: #4ade80; font-weight: 600; }
+.rep-mid { color: #facc15; font-weight: 600; }
+.rep-low { color: #f87171; font-weight: 600; }
 .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -207,9 +210,19 @@ td { color: #e8e8e8; }
 <section>
     <h2>Online Nodes</h2>
     <table>
-        <thead><tr><th>Name</th><th>Capabilities</th><th>Languages</th><th>Status</th></tr></thead>
+        <thead><tr><th>Name</th><th>Capabilities</th><th>Languages</th><th>Reputation</th><th>Speed</th><th>Benchmark</th><th>Status</th></tr></thead>
         <tbody id="nodes-body">
-            <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h2>Leaderboard</h2>
+    <table>
+        <thead><tr><th>Rank</th><th>Name</th><th>Score</th><th>Tasks</th><th>Success Rate</th><th>Avg Speed</th></tr></thead>
+        <tbody id="lb-body">
+            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
         </tbody>
     </table>
 </section>
@@ -314,17 +327,66 @@ async function loadNodes() {
         const nodes = await r.json();
         const tbody = document.getElementById('nodes-body');
         if (nodes.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No nodes online</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No nodes online</td></tr>';
             return;
         }
-        tbody.innerHTML = nodes.map(n => `<tr>
-            <td>${n.name || n.node_id}</td>
-            <td>${(n.capabilities || []).join(', ')}</td>
-            <td>${(n.languages || []).join(', ')}</td>
-            <td class="status-online">● Online</td>
-        </tr>`).join('');
+        // Fetch reputation and benchmark for each node
+        const rows = await Promise.all(nodes.map(async n => {
+            let repScore = '-';
+            let repClass = 'rep-mid';
+            let speedText = '-';
+            let benchIcon = '-';
+            try {
+                const rr = await fetch(BASE + '/api/v1/reputation/' + (n.node_id || ''));
+                const rd = await rr.json();
+                repScore = rd.score;
+                repClass = repScore > 70 ? 'rep-high' : repScore >= 40 ? 'rep-mid' : 'rep-low';
+            } catch(e) {}
+            try {
+                const br = await fetch(BASE + '/api/v1/benchmark/' + (n.node_id || ''));
+                const bd = await br.json();
+                if (bd.benchmark) {
+                    speedText = bd.benchmark.estimated_tokens_per_sec + ' t/s';
+                    benchIcon = bd.benchmark.benchmark_passed
+                        ? '<span style="color:#4ade80">PASS</span>'
+                        : '<span style="color:#f87171">FAIL</span>';
+                }
+            } catch(e) {}
+            return `<tr>
+                <td>${n.name || n.node_id}</td>
+                <td>${(n.capabilities || []).join(', ')}</td>
+                <td>${(n.languages || []).join(', ')}</td>
+                <td class="${repClass}">${repScore}</td>
+                <td>${speedText}</td>
+                <td>${benchIcon}</td>
+                <td class="status-online">● Online</td>
+            </tr>`;
+        }));
+        tbody.innerHTML = rows.join('');
     } catch(e) {
         console.error('Nodes error:', e);
+    }
+}
+
+async function loadLeaderboard() {
+    try {
+        const r = await fetch(BASE + '/api/v1/leaderboard?limit=10');
+        const lb = await r.json();
+        const tbody = document.getElementById('lb-body');
+        if (lb.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No reputation data yet</td></tr>';
+            return;
+        }
+        tbody.innerHTML = lb.map((n, i) => `<tr>
+            <td>${i + 1}</td>
+            <td>${n.node_id}</td>
+            <td class="${n.score > 70 ? 'rep-high' : n.score >= 40 ? 'rep-mid' : 'rep-low'}">${n.score}</td>
+            <td>${n.total_tasks}</td>
+            <td>${(n.success_rate * 100).toFixed(1)}%</td>
+            <td>${n.avg_response_ms}ms</td>
+        </tr>`).join('');
+    } catch(e) {
+        console.error('Leaderboard error:', e);
     }
 }
 
@@ -412,9 +474,12 @@ loadStatus();
 loadNodes();
 loadBalance();
 loadHistory();
+loadLeaderboard();
 
 // Auto-refresh every 10 seconds
 setInterval(() => { loadStatus(); loadNodes(); }, 10000);
+// Refresh leaderboard every 30 seconds
+setInterval(loadLeaderboard, 30000);
 
 // Feedback modal
 function openFeedback() { document.getElementById('fb-overlay').classList.add('active'); }

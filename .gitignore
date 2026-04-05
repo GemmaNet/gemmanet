@@ -10,3 +10,5 @@ site/
 *.db
 backups/
 .ruff_cache/
+ops/
+*.log

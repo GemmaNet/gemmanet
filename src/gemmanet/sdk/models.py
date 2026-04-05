@@ -52,6 +52,8 @@ class MsgType(str, Enum):
     TASK_RESULT = 'task_result'
     CREDIT_UPDATE = 'credit_update'
     ERROR = 'error'
+    BENCHMARK = 'benchmark'
+    BENCHMARK_RESULT = 'benchmark_result'
 
 
 class WSMessage(BaseModel):
@@ -98,6 +100,14 @@ class CreditUpdatePayload(BaseModel):
     balance: int
     change: int
     reason: str
+
+
+class BenchmarkPayload(BaseModel):
+    prompts: list[str]
+
+
+class BenchmarkResultPayload(BaseModel):
+    results: list[dict]
 
 
 def make_ws_msg(msg_type: MsgType, payload_dict: dict) -> str:

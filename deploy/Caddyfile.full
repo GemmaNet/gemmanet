@@ -1,12 +1,12 @@
 :80 {
     # Landing page at root
     handle / {
-        root * /home/cxwg0011/gemmanet/website
+        root * /opt/gemmanet/website
         file_server
     }
     handle /docs/* {
         uri strip_prefix /docs
-        root * /home/cxwg0011/gemmanet/site
+        root * /opt/gemmanet/site
         file_server
     }
     handle /dashboard/* {
@@ -18,9 +18,15 @@
     handle /ws/* {
         reverse_proxy localhost:8800
     }
+    handle /talk/* {
+        reverse_proxy localhost:8800
+    }
+    handle /talk {
+        reverse_proxy localhost:8800
+    }
     # Catch all other requests: serve landing page
     handle {
-        root * /home/cxwg0011/gemmanet/website
+        root * /opt/gemmanet/website
         file_server
     }
 }

@@ -9,12 +9,14 @@ import os
 def main():
     print('=== GemmaNet End-to-End Test ===')
 
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    venv = os.path.join(project_root, '.venv')
     env = {
         **os.environ,
-        'VIRTUAL_ENV': '/home/cxwg0011/gemmanet/.venv',
-        'PATH': '/home/cxwg0011/gemmanet/.venv/bin:' + os.environ['PATH'],
+        'VIRTUAL_ENV': venv,
+        'PATH': os.path.join(venv, 'bin') + ':' + os.environ['PATH'],
     }
-    cwd = '/home/cxwg0011/gemmanet'
+    cwd = project_root
 
     # Step 1: Start coordinator in background
     print('Starting coordinator...')

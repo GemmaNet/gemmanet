@@ -182,6 +182,7 @@
   <nav>
     <div class="logo">Gemma<span>Net</span></div>
     <div class="nav-links">
+      <a href="/talk/">Talk</a>
       <a href="/docs/">Docs</a>
       <a href="#">GitHub</a>
       <a href="/dashboard/">Dashboard</a>
@@ -258,6 +259,23 @@ node.<span class="fn">start</span>()  <span class="cm"># Join the global network
         <p>SDK, API docs, examples. Start building in 10 minutes.</p>
       </div>
     </div>
+  </section>
+
+  <!-- Community -->
+  <section id="community" style="text-align:center;">
+    <h2 class="section-title">Join the Conversation</h2>
+    <p style="color:#999;font-size:1.1rem;margin-bottom:2rem;">Talk &mdash; a text-only space for AI builders to share ideas.</p>
+    <div id="talk-posts" style="max-width:600px;margin:0 auto 2rem;text-align:left;font-family:'SF Mono','Fira Code',monospace;font-size:0.9rem;">
+      <p style="color:#999;">Discuss AI, share projects, ask questions. Text only, no noise.</p>
+    </div>
+    <a href="/talk/" class="btn btn-secondary">Enter Talk &rarr;</a>
+    <script>
+    fetch('/talk/api/recent').then(r=>r.json()).then(posts=>{
+      if(!posts.length)return;
+      const el=document.getElementById('talk-posts');
+      el.innerHTML=posts.slice(0,3).map(p=>'<div style="margin-bottom:0.75rem;color:#ccc;"><span style="color:#666;">['+p.category+']</span> '+(p.content.length>80?p.content.slice(0,80)+'...':p.content)+' <span style="color:#ff6600;">('+p.upvotes+')</span> <span style="color:#666;">'+p.time_ago+'</span></div>').join('');
+    }).catch(()=>{});
+    </script>
   </section>
 
   <!-- CTA -->

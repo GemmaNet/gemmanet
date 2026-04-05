@@ -81,6 +81,8 @@ class Node:
 
                             if msg.msg_type == MsgType.TASK_ASSIGN:
                                 asyncio.create_task(self._handle_task(msg.payload))
+                            elif msg.msg_type == MsgType.BENCHMARK:
+                                asyncio.create_task(self._handle_benchmark(msg.payload))
                             elif msg.msg_type == MsgType.CREDIT_UPDATE:
                                 self._balance = msg.payload.get('balance', self._balance)
                                 change = msg.payload.get('change', 0)
@@ -151,6 +153,48 @@ class Node:
                 await self._ws.send(result_msg)
             except Exception as e:
                 logger.error("Failed to send task result: %s", e)
+
+    async def _handle_benchmark(self, payload: dict):
+        prompts = payload.get('prompts', [])
+        logger.info("Running benchmark with %d prompts", len(prompts))
+        results = []
+
+        handler = self._handlers.get('chat') or next(iter(self._handlers.values()), None)
+
+        for prompt in prompts:
+            start = time.monotonic()
+            try:
+                if handler:
+                    response = handler(prompt)
+                else:
+                    response = prompt  # echo if no handler
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                results.append({
+                    'prompt': prompt,
+                    'response': str(response),
+                    'time_ms': elapsed_ms,
+                    'success': True,
+                })
+            except Exception as e:
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                results.append({
+                    'prompt': prompt,
+                    'response': str(e),
+                    'time_ms': elapsed_ms,
+                    'success': False,
+                })
+                logger.error("Benchmark prompt failed: %s", e)
+
+        if self._ws:
+            result_msg = make_ws_msg(MsgType.BENCHMARK_RESULT, {
+                'node_id': self.node_id,
+                'results': results,
+            })
+            try:
+                await self._ws.send(result_msg)
+                logger.info("Benchmark results sent")
+            except Exception as e:
+                logger.error("Failed to send benchmark results: %s", e)
 
     async def _send_heartbeat(self):
         while self._running:

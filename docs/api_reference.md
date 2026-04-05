@@ -186,3 +186,106 @@ All messages are JSON with this structure:
 | `TASK_RESULT` | Node -> Coordinator | Return task result |
 | `CREDIT_UPDATE` | Coordinator -> Node | Notify balance change |
 | `ERROR` | Coordinator -> Node | Error notification |
+
+---
+
+## OpenAI Compatible API
+
+GemmaNet provides an OpenAI-compatible endpoint. Any application
+using the OpenAI SDK can switch to GemmaNet by changing two lines:
+
+```python
+from openai import OpenAI
+client = OpenAI(
+    base_url='https://api.gemmanet.net/v1',  # Change this
+    api_key='gn_your_key',                     # Change this
+)
+# Everything else stays the same!
+```
+
+### Endpoints
+
+#### POST /v1/chat/completions
+
+Send a chat completion request in standard OpenAI format.
+
+**Auth required:** Yes (`Authorization: Bearer <api_key>`)
+
+**Request body:**
+
+```json
+{
+  "model": "gemmanet/auto",
+  "messages": [
+    {"role": "system", "content": "You are a translator."},
+    {"role": "user", "content": "Translate to Chinese: Hello world"}
+  ],
+  "max_tokens": 1024,
+  "temperature": 0.7,
+  "stream": false
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "id": "chatcmpl-xxxxx",
+  "object": "chat.completion",
+  "created": 1712345678,
+  "model": "gemmanet/auto",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "...response..."},
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  }
+}
+```
+
+**Error response:**
+
+```json
+{
+  "error": {
+    "message": "Invalid API key",
+    "type": "authentication_error",
+    "code": "invalid_api_key"
+  }
+}
+```
+
+#### GET /v1/models
+
+List available models (capabilities) on the network.
+
+**Auth required:** No
+
+**Response:**
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "gemmanet/auto", "object": "model", "owned_by": "gemmanet"},
+    {"id": "gemmanet/chat", "object": "model", "owned_by": "gemmanet"},
+    {"id": "gemmanet/translate", "object": "model", "owned_by": "gemmanet"},
+    {"id": "gemmanet/summarize", "object": "model", "owned_by": "gemmanet"},
+    {"id": "gemmanet/code", "object": "model", "owned_by": "gemmanet"}
+  ]
+}
+```
+
+### Available Models
+
+| Model | Description |
+|-------|-------------|
+| `gemmanet/auto` | Automatically routes to best available node |
+| `gemmanet/chat` | General chat |
+| `gemmanet/translate` | Translation |
+| `gemmanet/summarize` | Summarization |
+| `gemmanet/code` | Code generation |

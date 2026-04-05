@@ -125,7 +125,7 @@ The `demo_translate_app.py` script demonstrates a full GemmaNet deployment:
 Run it with:
 
 ```bash
-cd /home/cxwg0011/gemmanet
+cd gemmanet
 source .venv/bin/activate
 python examples/demo_translate_app.py
 ```
