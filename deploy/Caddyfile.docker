@@ -1,0 +1,56 @@
+# Caddy config for the docker compose stack (see deploy/DEPLOY.md).
+# Env: SITE_ADDRESSES, API_HOST, TLS_MODE (origin | none).
+{
+	servers {
+		# Requests arrive through Cloudflare. Trust its edge ranges so the
+		# real visitor IP (CF-Connecting-IP) is used for rate limits.
+		# Source: https://www.cloudflare.com/ips/ (CI checks this list).
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+# Cloudflare Origin Certificate (Cloudflare SSL/TLS mode "Full (strict)")
+(tls-origin) {
+	tls /certs/origin.pem /certs/origin.key
+}
+
+# Plain HTTP, for local testing with http:// site addresses
+(tls-none) {
+}
+
+(coordinator) {
+	reverse_proxy coordinator:8800 {
+		# Hand the coordinator exactly one address: the real client.
+		header_up X-Forwarded-For {client_ip}
+	}
+}
+
+{$SITE_ADDRESSES} {
+	import tls-{$TLS_MODE}
+
+	# api.<domain>: everything goes to the coordinator
+	@api host {$API_HOST}
+	handle @api {
+		import coordinator
+	}
+
+	@app path /api/* /v1/* /ws/* /dashboard /dashboard/* /talk /talk/*
+	handle @app {
+		import coordinator
+	}
+
+	redir /docs /docs/ 308
+	handle /docs/* {
+		uri strip_prefix /docs
+		root * /srv/docs
+		encode gzip
+		file_server
+	}
+
+	handle {
+		root * /srv/website
+		encode gzip
+		file_server
+	}
+}

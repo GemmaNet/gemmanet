@@ -1,5 +1,7 @@
 # Upgrading a coordinator from 0.1.0a1 to 0.2.0a1
 
+For a new installation use [DEPLOY.md](DEPLOY.md) (Docker) instead.
+
 0.2.0a1 removes the credit system, requires API keys for nodes and runs the
 coordinator as a single process. Paths below follow the layout the Caddy
 configs expect (`/opt/gemmanet`); adjust them to your setup.

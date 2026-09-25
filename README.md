@@ -43,8 +43,10 @@ uvicorn gemmanet.coordinator.server:app --port 8800
 ```
 
 Run a single coordinator process (no `--workers`); see
-[Architecture](docs/architecture.md#deployment). Upgrading from 0.1? Follow
-[deploy/UPGRADE.md](deploy/UPGRADE.md).
+[Architecture](docs/architecture.md#deployment). For a production server,
+`docker compose up -d` runs the whole stack (PostgreSQL, Redis, coordinator,
+Caddy with the website and docs): follow [deploy/DEPLOY.md](deploy/DEPLOY.md).
+Upgrading from 0.1? Follow [deploy/UPGRADE.md](deploy/UPGRADE.md).
 
 ### Get an API Key
 
