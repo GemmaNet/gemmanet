@@ -1,7 +1,7 @@
 from gemmanet import Client
 
-# Create client with demo API key
-client = Client(api_key='demo-key-001')
+# Use your API key from POST /api/v1/register
+client = Client(api_key='gn_your_api_key_here')
 
 # Check network status
 print('Network status:', client.network_status())
@@ -18,11 +18,11 @@ result = client.request(
     content='Hello GemmaNet!',
     params={'prefix': 'Test'},
 )
+print(f'Status: {result.status.value}')
 print(f'Result: {result.result}')
-print(f'Cost: {result.cost} credits')
 print(f'Node: {result.node_id}')
 
-# Check balance
-print(f'Balance: {client.balance()} credits')
+# Rate the node that served you (1-5); this feeds its reputation
+client.rate(result.task_id, 5)
 
 client.close()

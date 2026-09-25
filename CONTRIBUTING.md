@@ -24,14 +24,15 @@ contributions of all kinds: bug fixes, features, documentation, and more.
 
 ## Development Workflow
 
-- **Run tests** before submitting:
+- **Run tests** before submitting. They need PostgreSQL and Redis (see
+  `.github/workflows/test.yml` for the exact setup):
   ```bash
-  pytest tests/ -v --ignore=tests/test_e2e.py
+  export DATABASE_URL=postgresql://gemmanet:gemmanet@localhost:5432/gemmanet_test
+  pytest tests/ -v
   ```
 - **Lint your code** with ruff:
   ```bash
-  ruff check src/
-  ruff format src/
+  ruff check src/ tests/
   ```
 - Keep commits focused and write clear commit messages.
 

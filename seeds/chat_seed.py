@@ -1,3 +1,4 @@
+# Requires GEMMANET_API_KEY (an API key from POST /api/v1/register).
 import logging, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 logging.basicConfig(level=logging.INFO,
