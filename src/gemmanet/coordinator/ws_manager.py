@@ -11,36 +11,41 @@ class WSConnectionManager:
         self.connections: dict[str, WebSocket] = {}
         self.node_info: dict[str, dict] = {}
 
-    async def connect(self, node_id: str, websocket: WebSocket):
-        await websocket.accept()
-        self.connections[node_id] = websocket
-        logger.info(f'Node connected: {node_id}')
+    def attach(self, node_id: str, websocket: WebSocket, info: dict) -> WebSocket | None:
+        """Make `websocket` the live connection for node_id.
 
-    async def disconnect(self, node_id: str):
+        Returns the connection it replaced (same API key + node name
+        reconnecting), which the caller should close.
+        """
+        previous = self.connections.get(node_id)
+        self.connections[node_id] = websocket
+        self.node_info[node_id] = info
+        logger.info(f'Node connected: {node_id}')
+        return previous if previous is not websocket else None
+
+    def detach(self, node_id: str, websocket: WebSocket) -> bool:
+        """Forget node_id if `websocket` is still its live connection.
+
+        Returns False when a newer connection has already taken over, so a
+        replaced connection never tears down its successor's state.
+        """
+        if self.connections.get(node_id) is not websocket:
+            return False
         self.connections.pop(node_id, None)
         self.node_info.pop(node_id, None)
         logger.info(f'Node disconnected: {node_id}')
+        return True
 
-    async def send_to_node(self, node_id: str, message: str) -> bool:
+    def get(self, node_id: str) -> WebSocket | None:
+        return self.connections.get(node_id)
+
+    async def send(self, node_id: str, websocket: WebSocket, message: str) -> bool:
         try:
-            ws = self.connections.get(node_id)
-            if ws is None:
-                logger.warning(f'No connection for {node_id}')
-                return False
-            await ws.send_text(message)
+            await websocket.send_text(message)
             return True
         except Exception as e:
             logger.error(f'Send to {node_id} failed: {e}')
-            await self.disconnect(node_id)
             return False
-
-    async def broadcast(self, message: str, exclude: str | None = None):
-        for node_id in list(self.connections):
-            if node_id != exclude:
-                await self.send_to_node(node_id, message)
-
-    def register_node(self, node_id: str, info: dict):
-        self.node_info[node_id] = info
 
     def get_online_nodes(self) -> list[dict]:
         return list(self.node_info.values())

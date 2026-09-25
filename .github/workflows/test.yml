@@ -39,6 +39,7 @@ jobs:
       DATABASE_URL: postgresql://gemmanet:gemmanet@localhost:5432/gemmanet_test
       REDIS_URL: redis://localhost:6379/0
       TEST_REDIS_URL: redis://localhost:6379/1
+      E2E_REDIS_URL: redis://localhost:6379/2
 
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +54,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Lint
+        run: ruff check src/ tests/
+
       - name: Run tests
-        run: |
-          pytest tests/ -v --ignore=tests/test_e2e.py --ignore=tests/test_ollama_integration.py
+        run: pytest tests/ -v

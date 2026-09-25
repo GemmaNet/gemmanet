@@ -1,11 +1,13 @@
-from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from datetime import datetime, timezone
-from collections import defaultdict
-import math
-import time
 import html
+import math
 import re
+import time
+from collections import defaultdict
+from datetime import UTC, datetime
+from urllib.parse import urlsplit
+
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from gemmanet.forum.database import get_db
 
@@ -47,10 +49,20 @@ button:hover { background: #333; }
 
 
 def _get_ip(request: Request) -> str:
-    forwarded = request.headers.get('x-forwarded-for')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
+    # uvicorn already resolves X-Forwarded-For from trusted proxies
+    # (--forwarded-allow-ips); reading the raw header here would let any
+    # client spoof its address and dodge rate limits and vote dedup.
     return request.client.host if request.client else '0.0.0.0'
+
+
+def _safe_referer(request: Request) -> str:
+    """Redirect back only within the forum; never to another site."""
+    referer = urlsplit(request.headers.get('referer', ''))
+    if referer.netloc and referer.netloc != request.headers.get('host', ''):
+        return '/talk/'
+    if not referer.path.startswith('/talk'):
+        return '/talk/'
+    return referer.path + (f'?{referer.query}' if referer.query else '')
 
 
 def _check_rate(store: dict, ip: str, max_count: int, window: int = 3600) -> bool:
@@ -68,11 +80,11 @@ def sanitize(text: str) -> str:
 
 def time_ago(created_at: str) -> str:
     try:
-        dt = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+        dt = datetime.strptime(f'{created_at} +0000', '%Y-%m-%d %H:%M:%S %z')
     except (ValueError, TypeError):
         return '?'
-    dt = dt.replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - dt
+    dt = dt.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - dt
     seconds = int(delta.total_seconds())
     if seconds < 60:
         return f'{seconds}s'
@@ -91,11 +103,11 @@ def time_ago(created_at: str) -> str:
 
 def hours_age(created_at: str) -> float:
     try:
-        dt = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+        dt = datetime.strptime(f'{created_at} +0000', '%Y-%m-%d %H:%M:%S %z')
     except (ValueError, TypeError):
         return 1.0
-    dt = dt.replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - dt
+    dt = dt.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - dt
     return max(delta.total_seconds() / 3600, 0)
 
 
@@ -258,10 +270,9 @@ async def submit_post(request: Request, content: str = Form(...), username: str 
     if category not in CATEGORIES:
         category = 'general'
 
+    # Text only: drop markup. Escaping happens once, when rendering.
     content = re.sub(r'<[^>]+>', '', content)
-    content = html.escape(content)
     username = re.sub(r'<[^>]+>', '', username)
-    username = html.escape(username)
 
     conn = get_db()
     cur = conn.execute(
@@ -288,10 +299,9 @@ async def submit_reply(post_id: int, request: Request, content: str = Form(...),
     if len(username) > 30:
         username = username[:30]
 
+    # Text only: drop markup. Escaping happens once, when rendering.
     content = re.sub(r'<[^>]+>', '', content)
-    content = html.escape(content)
     username = re.sub(r'<[^>]+>', '', username)
-    username = html.escape(username)
 
     conn = get_db()
     post = conn.execute('SELECT id FROM posts WHERE id = ?', (post_id,)).fetchone()
@@ -331,5 +341,4 @@ async def upvote(post_id: int, request: Request):
             pass
 
     conn.close()
-    referer = request.headers.get('referer', '/talk/')
-    return RedirectResponse(url=referer, status_code=303)
+    return RedirectResponse(url=_safe_referer(request), status_code=303)

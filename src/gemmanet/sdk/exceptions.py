@@ -6,10 +6,6 @@ class AuthenticationError(GemmaNetError):
     pass
 
 
-class InsufficientCreditsError(GemmaNetError):
-    pass
-
-
 class NoNodeAvailableError(GemmaNetError):
     pass
 

@@ -3,13 +3,15 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from gemmanet import __version__
 
 TEMPLATE_DIR = Path(__file__).parent / 'templates'
 STATIC_DIR = Path(__file__).parent / 'static'
 
-dashboard_app = FastAPI(title='GemmaNet Dashboard', version='0.1.0')
+dashboard_app = FastAPI(title='GemmaNet Dashboard', version=__version__)
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
@@ -22,5 +24,5 @@ async def index(request: Request):
     coordinator_url = os.getenv('COORDINATOR_URL', 'http://localhost:8800')
     return templates.TemplateResponse(
         request, 'index.html',
-        context={'coordinator_url': coordinator_url},
+        context={'coordinator_url': coordinator_url, 'version': __version__},
     )
