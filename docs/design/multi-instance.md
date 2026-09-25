@@ -1,6 +1,6 @@
 # Design: Multi-Instance Coordinator
 
-**Status:** Proposed (next iteration) · **Current behavior:** single instance, enforced by a Redis lock
+**Status:** Accepted, scheduled for the next iteration · **Current behavior:** single instance, enforced by a Redis lock
 
 ## 1. Problem
 
@@ -84,8 +84,34 @@ Every step is driven by a check that must pass before moving on; a failure sends
 |------|------|--------|------------|
 | ① Unit | every change | envelope encode/decode, forwarding-table ownership checks, liveness expiry (real Redis in CI) | fix the change |
 | ② Two-instance E2E | each milestone | two coordinator processes; nodes on A, requests on B: request/response, streaming, rating, duplicate node across instances, kill A mid-task → B returns 502 in < 3 s | back to the milestone |
-| ③ Load | before rollout | 200 concurrent requests across 2 instances vs 1: added p95 latency of the pub/sub hop ≤ 20 ms, zero lost tasks | profile, adjust (e.g. batching, fast path) |
-| ④ Staged rollout | after merge | staging with `--workers 2` for a week: task timeout rate, 502 rate, node flapping (4000 closes) compared with single instance | flip `GEMMANET_MULTI_INSTANCE=0` (restores the lock) and investigate |
+| ③ Load | before rollout | the load profile in §4.1 passes all its criteria | profile, adjust (e.g. batching, fast path) |
+| ④ Staged rollout | after merge | staging with 2 instances for **one week**, compared with a single-instance baseline: task timeout rate, 502 rate, node flapping (4000 closes) | flip `GEMMANET_MULTI_INSTANCE=0` (restores the lock) and investigate |
+
+### 4.1 Load profile (loop ③)
+
+Sized from the API's own limits rather than current traffic: `/api/v1/request`
+allows 60 requests/minute per client, so ~100 clients at full speed produce
+~100 requests/s. The profile covers that ceiling with an order of magnitude
+more nodes than an alpha network has.
+
+| Dimension | Value |
+|-----------|-------|
+| Coordinator instances | 1 (baseline), 2 and 3 |
+| Simulated nodes | 200, spread evenly over instances; handlers sleep 50–500 ms (random) to mimic model latency |
+| Request load | ramp to 200 concurrent requests, then a steady 100 requests/s for 10 minutes (test clients use separate API keys so rate limits don't cap the run) |
+| Streaming | 50 concurrent streams of ~5 s each running alongside |
+| Fault injection | kill one instance mid-run |
+
+Pass criteria (all must hold):
+
+- **Zero lost tasks**: every request gets a result or an explicit error.
+- The cross-instance hop adds **≤ 20 ms at p95** and **≤ 50 ms at p99** compared with the single-instance baseline.
+- Coordinator CPU stays **< 70%** per instance.
+- Memory stays flat: **< 10%** growth over the 10-minute steady phase (catches tracker/forwarding-table leaks).
+- After an instance is killed, its in-flight tasks fail with 502 **within 3 s**, and tasks on other instances are unaffected.
+
+The load generator lives in `scripts/loadtest.py` (asyncio + the SDK) so the
+run can be repeated before every release.
 
 ## 5. Milestones
 
@@ -96,7 +122,7 @@ Every step is driven by a check that must pass before moving on; a failure sends
 5. Redis-backed rate limits; status counts from the registry.
 6. Loops ③ and ④, then make multi-instance the default.
 
-## 6. Open Questions
+## 6. Decisions
 
-- Target scale: how many coordinator instances and concurrent nodes should loop ③ simulate?
-- Is a week of staging (loop ④) acceptable, or is there a production deadline?
+- Load test scale: the profile in §4.1.
+- A one-week staging period (loop ④) before multi-instance becomes the default.
