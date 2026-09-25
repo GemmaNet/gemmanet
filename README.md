@@ -43,7 +43,8 @@ uvicorn gemmanet.coordinator.server:app --port 8800
 ```
 
 Run a single coordinator process (no `--workers`); see
-[Architecture](docs/architecture.md#deployment).
+[Architecture](docs/architecture.md#deployment). Upgrading from 0.1? Follow
+[deploy/UPGRADE.md](deploy/UPGRADE.md).
 
 ### Get an API Key
 
