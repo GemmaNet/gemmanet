@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: April 2026**
+**Last updated: September 2026**
 
 ## 1. Introduction
 
@@ -10,7 +10,7 @@ This Privacy Policy describes how GemmaNet ("we", "us") collects, uses, and prot
 
 - **Email address** - provided at registration (optional for anonymous usage)
 - **Node metadata** - node name, capabilities, supported languages, and model information
-- **Transaction records** - credit amounts, timestamps, and participating node IDs
+- **Reputation data** - per-node task counts, success rates, response times, and user ratings; which account requested a task and which node served it is kept for one hour so the requester can rate it
 - **Usage analytics** - request counts, response times, and error rates (aggregate metrics, not content)
 
 ## 3. What We Do NOT Collect
@@ -23,7 +23,8 @@ This Privacy Policy describes how GemmaNet ("we", "us") collects, uses, and prot
 
 - **Routing optimization** - to match requests with the best available nodes
 - **Service improvement** - to monitor platform health, identify issues, and improve performance
-- **Account management** - to manage your account, credits, and API access
+- **Account management** - to manage your account and API access
+- **Node reputation** - to rank nodes by reliability and quality when routing requests
 
 ## 5. Data Storage and Security
 
@@ -35,7 +36,7 @@ We do not sell your personal data to third parties. We may share anonymized, agg
 
 ## 7. Data Retention
 
-Account data is retained while your account is active. Upon account deletion, we will remove your personal data within 30 days. Anonymized transaction records may be retained for platform analytics.
+Account data is retained while your account is active. Upon account deletion, we will remove your personal data within 30 days. Aggregate node reputation statistics may be retained for routing and platform analytics.
 
 ## 8. Your Rights
 

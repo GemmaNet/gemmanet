@@ -1,5 +1,6 @@
-import sqlite3
+import html
 import os
+import sqlite3
 
 DB_PATH = os.getenv('FORUM_DB', 'forum.db')
 
@@ -39,7 +40,24 @@ def init_forum_db():
         );
     ''')
     conn.commit()
+    _migrate(conn)
     conn.close()
+
+
+def _migrate(conn):
+    """One-time data fixes, tracked with SQLite's user_version."""
+    version = conn.execute('PRAGMA user_version').fetchone()[0]
+    if version < 1:
+        # Posts used to be HTML-escaped on write *and* on render, so users
+        # saw "&amp;" for "&". Store plain text; escaping happens at render.
+        for table in ('posts', 'replies'):
+            rows = conn.execute(f'SELECT id, username, content FROM {table}').fetchall()
+            for row in rows:
+                conn.execute(
+                    f'UPDATE {table} SET username = ?, content = ? WHERE id = ?',
+                    (html.unescape(row['username']), html.unescape(row['content']), row['id']))
+        conn.execute('PRAGMA user_version = 1')
+        conn.commit()
 
 
 def seed_forum_db():

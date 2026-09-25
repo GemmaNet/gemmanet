@@ -1,29 +1,47 @@
 """Client class - developers use this to consume AI services."""
 import json
-from typing import Iterator
+from collections.abc import Iterator
 
 import httpx
 
-from gemmanet.sdk.models import TaskResult, NodeInfo
 from gemmanet.sdk.exceptions import (
     AuthenticationError,
-    InsufficientCreditsError,
-    NoNodeAvailableError,
     GemmaNetError,
+    NoNodeAvailableError,
     TaskTimeoutError,
 )
+from gemmanet.sdk.models import NodeInfo, TaskResult
 
 
-def _check_response(resp: httpx.Response):
+def _error_detail(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+    except ValueError:
+        return resp.text[:200]
+    if isinstance(data, dict):
+        if isinstance(data.get('error'), dict):
+            return str(data['error'].get('message', data['error']))
+        if 'detail' in data:
+            return str(data['detail'])
+    return str(data)[:200]
+
+
+def _check_response(resp: httpx.Response, task_endpoint: bool = True):
+    """Raise the SDK exception matching an error response (body must be read).
+
+    On task endpoints 404/503 mean "no node for this task"; elsewhere they are
+    ordinary errors (e.g. rating an unknown task).
+    """
+    if resp.status_code < 400:
+        return
+    detail = _error_detail(resp)
     if resp.status_code == 401:
-        raise AuthenticationError('Invalid API key')
-    if resp.status_code == 402:
-        raise InsufficientCreditsError('Not enough credits')
-    if resp.status_code == 404:
-        raise NoNodeAvailableError('No node available for this task')
-    if resp.status_code >= 500:
-        raise GemmaNetError(f'Server error: {resp.text}')
-    resp.raise_for_status()
+        raise AuthenticationError(detail or 'Invalid API key')
+    if task_endpoint and resp.status_code in (404, 503):
+        raise NoNodeAvailableError(detail or 'No node available for this task')
+    if resp.status_code == 504:
+        raise TaskTimeoutError(detail or 'Task timed out')
+    raise GemmaNetError(f'HTTP {resp.status_code}: {detail}')
 
 
 class Client:
@@ -37,72 +55,76 @@ class Client:
             timeout=30.0,
         )
 
-    def request(self, task: str, content: str,
-                params: dict | None = None,
-                max_cost: int | None = None,
-                timeout: float = 60.0) -> TaskResult:
-        body = {
+    @staticmethod
+    def _task_body(task: str, content: str, params: dict | None,
+                   stream: bool = False) -> dict:
+        return {
             'task_type': task,
             'content': content,
             'params': params or {},
-            'max_cost': max_cost,
-            'api_key': self.api_key,
+            'stream': stream,
         }
+
+    def request(self, task: str, content: str,
+                params: dict | None = None,
+                timeout: float = 90.0) -> TaskResult:
         try:
-            resp = self._client.post('/api/v1/request', json=body,
+            resp = self._client.post('/api/v1/request',
+                                     json=self._task_body(task, content, params),
                                      timeout=timeout)
         except httpx.TimeoutException:
-            raise TaskTimeoutError('Request timed out')
+            raise TaskTimeoutError('Request timed out') from None
         _check_response(resp)
         return TaskResult.model_validate(resp.json())
 
     async def request_async(self, task: str, content: str,
                             params: dict | None = None,
-                            max_cost: int | None = None,
-                            timeout: float = 60.0) -> TaskResult:
-        body = {
-            'task_type': task,
-            'content': content,
-            'params': params or {},
-            'max_cost': max_cost,
-            'api_key': self.api_key,
-        }
+                            timeout: float = 90.0) -> TaskResult:
         async with httpx.AsyncClient(
             base_url=self.coordinator_url,
             headers={'Authorization': f'Bearer {self.api_key}'},
             timeout=timeout,
         ) as client:
             try:
-                resp = await client.post('/api/v1/request', json=body)
+                resp = await client.post(
+                    '/api/v1/request', json=self._task_body(task, content, params))
             except httpx.TimeoutException:
-                raise TaskTimeoutError('Request timed out')
+                raise TaskTimeoutError('Request timed out') from None
             _check_response(resp)
             return TaskResult.model_validate(resp.json())
 
     def request_stream(self, task: str, content: str,
-                       params: dict | None = None) -> Iterator[str]:
-        """Send request and receive streaming response."""
-        messages = [{'role': 'user', 'content': content}]
-        with self._client.stream(
-            'POST', '/v1/chat/completions',
-            json={'model': f'gemmanet/{task}', 'messages': messages,
-                  'stream': True},
-        ) as response:
-            _check_response(response)
-            for line in response.iter_lines():
-                if line.startswith('data: '):
-                    data = line[6:]
-                    if data == '[DONE]':
+                       params: dict | None = None,
+                       timeout: float = 90.0) -> Iterator[str]:
+        """Send a request and yield the result text as the node produces it."""
+        try:
+            with self._client.stream(
+                'POST', '/api/v1/request',
+                json=self._task_body(task, content, params, stream=True),
+                timeout=timeout,
+            ) as response:
+                if response.status_code >= 400:
+                    response.read()
+                    _check_response(response)
+                for line in response.iter_lines():
+                    if not line.startswith('data: '):
+                        continue
+                    event = json.loads(line[6:])
+                    if 'error' in event:
+                        raise GemmaNetError(event['error'].get('message', 'Task failed'))
+                    if event.get('done'):
                         return
-                    chunk = json.loads(data)
-                    chunk_content = chunk['choices'][0]['delta'].get('content', '')
-                    if chunk_content:
-                        yield chunk_content
+                    if event.get('delta'):
+                        yield event['delta']
+        except httpx.TimeoutException:
+            raise TaskTimeoutError('Request timed out') from None
 
-    def balance(self) -> int:
-        resp = self._client.get('/api/v1/balance')
-        _check_response(resp)
-        return resp.json().get('balance', 0)
+    def rate(self, task_id: str, rating: int) -> dict:
+        """Rate a task you requested (1-5 stars); feeds the node's reputation."""
+        resp = self._client.post('/api/v1/rate',
+                                 json={'task_id': task_id, 'rating': rating})
+        _check_response(resp, task_endpoint=False)
+        return resp.json()
 
     def nodes(self, capability: str | None = None) -> list[NodeInfo]:
         params = {}
@@ -111,11 +133,6 @@ class Client:
         resp = self._client.get('/api/v1/nodes', params=params)
         _check_response(resp)
         return [NodeInfo.model_validate(n) for n in resp.json()]
-
-    def history(self, limit: int = 20) -> list[dict]:
-        resp = self._client.get('/api/v1/history', params={'limit': limit})
-        _check_response(resp)
-        return resp.json()
 
     def network_status(self) -> dict:
         resp = self._client.get('/api/v1/status')

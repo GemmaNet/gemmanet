@@ -1,6 +1,8 @@
-import os
-import pytest
 import asyncio
+import os
+
+import pytest
+
 from gemmanet.coordinator.reputation import ReputationSystem
 
 TEST_REDIS = os.getenv('TEST_REDIS_URL', os.getenv('REDIS_URL', 'redis://localhost:6379/1'))
@@ -25,7 +27,7 @@ def test_new_node_default_score():
 def test_score_improves_with_success():
     async def run():
         rep = await make_rep()
-        for i in range(15):
+        for _ in range(15):
             await rep.record_task_result('good-node', success=True,
                 response_time_ms=500)
         score = await rep.get_score('good-node')
@@ -37,7 +39,7 @@ def test_score_improves_with_success():
 def test_score_drops_with_failures():
     async def run():
         rep = await make_rep()
-        for i in range(15):
+        for _ in range(15):
             await rep.record_task_result('bad-node', success=False,
                 response_time_ms=60000)
         score = await rep.get_score('bad-node')
@@ -49,7 +51,7 @@ def test_score_drops_with_failures():
 def test_user_rating():
     async def run():
         rep = await make_rep()
-        for i in range(5):
+        for _ in range(5):
             await rep.record_user_rating('rated-node', 5)
         stats = await rep.get_stats('rated-node')
         return stats
@@ -61,7 +63,7 @@ def test_user_rating():
 def test_suspension():
     async def run():
         rep = await make_rep()
-        for i in range(15):
+        for _ in range(15):
             await rep.record_task_result('terrible-node', success=False,
                 response_time_ms=60000)
         await rep.check_and_suspend('terrible-node')
@@ -75,7 +77,7 @@ def test_leaderboard():
         rep = await make_rep()
         for i in range(3):
             node_id = f'lb-node-{i}'
-            for j in range(10):
+            for _ in range(10):
                 await rep.record_task_result(node_id, success=True,
                     response_time_ms=1000 * (i + 1))
         lb = await rep.get_leaderboard(limit=10)
@@ -84,3 +86,36 @@ def test_leaderboard():
     assert len(lb) >= 3
     # First should have highest score (fastest)
     assert lb[0]['score'] >= lb[1]['score']
+
+
+def test_only_requester_can_rate_and_only_once():
+    from gemmanet.coordinator.reputation import AlreadyRated, NotTaskOwner, TaskNotFound
+
+    async def run():
+        rep = await make_rep()
+        await rep.remember_task('task-1', 'alice', ['node-a', 'node-b'])
+
+        with pytest.raises(NotTaskOwner):
+            await rep.rate_task('task-1', 'mallory', 1)
+        with pytest.raises(TaskNotFound):
+            await rep.rate_task('missing', 'alice', 5)
+
+        rated = await rep.rate_task('task-1', 'alice', 5)
+        with pytest.raises(AlreadyRated):
+            await rep.rate_task('task-1', 'alice', 1)
+        return rated, await rep.get_stats('node-a'), await rep.get_stats('node-b')
+
+    rated, stats_a, stats_b = asyncio.run(run())
+    assert rated == ['node-a', 'node-b']
+    assert stats_a['total_ratings'] == 1
+    assert stats_b['avg_rating'] == 5.0
+
+
+def test_leaderboard_keeps_full_node_ids():
+    async def run():
+        rep = await make_rep()
+        await rep.record_task_result('4f1c2a9e-0b7d-5e33-9c1a-7d2e8f6a1b00', True, 100)
+        return await rep.get_leaderboard()
+
+    lb = asyncio.run(run())
+    assert lb[0]['node_id'] == '4f1c2a9e-0b7d-5e33-9c1a-7d2e8f6a1b00'

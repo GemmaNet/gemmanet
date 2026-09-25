@@ -1,5 +1,6 @@
 """Node registry backed by Redis."""
 import json
+
 import redis.asyncio as aioredis
 
 
@@ -14,14 +15,15 @@ class NodeRegistry:
 
     async def close(self):
         if self.redis:
-            await self.redis.close()
+            await self.redis.aclose()
 
     async def register(self, node_id: str, info: dict):
         key = f'{self.prefix}{node_id}'
         await self.redis.set(key, json.dumps(info), ex=120)
         await self.redis.sadd('gn:online_nodes', node_id)
 
-    async def update_heartbeat(self, node_id: str, load_info: dict):
+    async def update_heartbeat(self, node_id: str, load_info: dict) -> bool:
+        """Refresh a node's entry; returns False if the entry no longer exists."""
         key = f'{self.prefix}{node_id}'
         existing = await self.redis.get(key)
         if existing:
@@ -30,6 +32,7 @@ class NodeRegistry:
             await self.redis.set(key, json.dumps(node_data), ex=120)
         load_key = f'gn:load:{node_id}'
         await self.redis.set(load_key, json.dumps(load_info), ex=120)
+        return existing is not None
 
     async def unregister(self, node_id: str):
         key = f'{self.prefix}{node_id}'

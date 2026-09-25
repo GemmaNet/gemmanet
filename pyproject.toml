@@ -4,38 +4,64 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gemmanet"
-version = "0.1.0a1"
-description = "GemmaNet - The Operating System for the AI Economy"
+version = "0.2.0a1"
+description = "GemmaNet - The Open Network for AI Services"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
+# The SDK (Node + Client) stays light; the coordinator lives in [server].
 dependencies = [
-    "fastapi>=0.110.0",
-    "uvicorn[standard]>=0.27.0",
-    "websockets>=12.0",
-    "redis>=5.0.0",
-    "psycopg2-binary>=2.9.0",
-    "sqlalchemy>=2.0.0",
-    "alembic>=1.13.0",
-    "click>=8.1.0",
-    "rich>=13.0.0",
     "httpx>=0.27.0",
+    "websockets>=12.0",
     "pydantic>=2.5.0",
-    "python-dotenv>=1.0.0",
-    "uuid7>=0.1.0",
-    "jinja2>=3.1.0",
-    "python-multipart>=0.0.9",
-    "slowapi>=0.1.9",
-    "passlib[bcrypt]>=1.7.4",
 ]
 
 [project.optional-dependencies]
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "redis>=5.0.1",
+    "psycopg2-binary>=2.9.0",
+    "sqlalchemy>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
+    "slowapi>=0.1.9",
+]
+node = [
+    "psutil>=5.9.0",
+]
 dev = [
+    "gemmanet[server,node]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "ruff>=0.2.0",
+    "ruff>=0.6.0",
+    "openai>=1.0.0",
     "mkdocs-material>=9.5.0",
 ]
 
+[project.urls]
+Homepage = "https://gemmanet.net"
+Repository = "https://github.com/gemmanet/gemmanet"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+gemmanet = ["dashboard/templates/*.html"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Explicit rule set so results don't change with ruff's default selection.
+select = ["E", "F", "W", "I", "UP", "B", "DTZ", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# Inline HTML/CSS templates and seed text read better unwrapped.
+"src/gemmanet/forum/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

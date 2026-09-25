@@ -1,24 +1,41 @@
 """Routing engine: match requests to best nodes."""
 import json
+import os
 import random
 
 from gemmanet.coordinator.registry import NodeRegistry
-from gemmanet.coordinator.ws_manager import WSConnectionManager
 from gemmanet.coordinator.reputation import ReputationSystem
+from gemmanet.coordinator.ws_manager import WSConnectionManager
+
+SPLIT_THRESHOLD_CHARS = 1000
+# Only task types whose output for a chunk is independent of the other
+# chunks can be split (translating paragraphs works; summarizing or chatting
+# about a fragment does not). Comma-separated, configurable per deployment.
+DEFAULT_SPLITTABLE_TASKS = 'translate'
+
+
+def _splittable_from_env() -> frozenset[str]:
+    raw = os.getenv('GEMMANET_SPLIT_TASKS', DEFAULT_SPLITTABLE_TASKS)
+    return frozenset(t.strip() for t in raw.split(',') if t.strip())
 
 
 class RoutingEngine:
     def __init__(self, registry: NodeRegistry, ws_manager: WSConnectionManager,
-                 reputation: ReputationSystem = None):
+                 reputation: ReputationSystem | None = None,
+                 splittable_tasks: set[str] | frozenset[str] | None = None):
         self.registry = registry
         self.ws_manager = ws_manager
         self.reputation = reputation
+        self.splittable_tasks = (frozenset(splittable_tasks)
+                                 if splittable_tasks is not None
+                                 else _splittable_from_env())
 
-    async def find_best_node(self, task_type: str,
-                             params: dict = None) -> str | None:
+    async def find_best_node(self, task_type: str, params: dict | None = None,
+                             exclude: set[str] | None = None) -> str | None:
         candidates = await self.registry.get_nodes_by_capability(task_type)
         candidates = [n for n in candidates
-                      if self.ws_manager and self.ws_manager.is_online(n['node_id'])]
+                      if self.ws_manager and self.ws_manager.is_online(n['node_id'])
+                      and n['node_id'] not in (exclude or ())]
         if not candidates:
             return None
 
@@ -102,7 +119,8 @@ class RoutingEngine:
         return [nid for nid, _ in scored[:num_needed]]
 
     def should_split(self, content: str, task_type: str) -> bool:
-        return len(content) > 1000
+        return (task_type in self.splittable_tasks
+                and len(content) > SPLIT_THRESHOLD_CHARS)
 
     def split_content(self, content: str, num_chunks: int) -> list[str]:
         paragraphs = content.split('\n\n')

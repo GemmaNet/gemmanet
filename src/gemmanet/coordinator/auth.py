@@ -1,13 +1,14 @@
 """API Key management and Feedback models."""
-import secrets
 import hashlib
+import secrets
 import uuid
-from datetime import datetime
+from datetime import timedelta
 
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func, or_
 
-from gemmanet.credits.database import Base, SessionLocal
-from gemmanet.credits.service import CreditService
+from gemmanet.coordinator.database import Base, SessionLocal
+
+LAST_USED_RESOLUTION = timedelta(minutes=5)
 
 
 class APIKey(Base):
@@ -16,7 +17,9 @@ class APIKey(Base):
     key_prefix = Column(String(11), nullable=False)
     key_hash = Column(String(128), nullable=False)
     email = Column(String(256), nullable=True)
-    node_id = Column(String(64), nullable=False)
+    # The DB column keeps its historical name so existing databases need no
+    # migration; it identifies the account that owns the key.
+    account_id = Column('node_id', String(64), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     last_used_at = Column(DateTime, nullable=True)
@@ -25,7 +28,7 @@ class APIKey(Base):
 class Feedback(Base):
     __tablename__ = 'feedback'
     id = Column(Integer, primary_key=True)
-    node_id = Column(String(64), nullable=True)
+    account_id = Column('node_id', String(64), nullable=True)
     feedback_type = Column(String(32), nullable=False)
     message = Column(String(4096), nullable=False)
     email = Column(String(256), nullable=True)
@@ -47,9 +50,9 @@ class APIKeyManager:
         return hashlib.sha256(raw_key.encode()).hexdigest()
 
     @staticmethod
-    def register(email: str = None) -> dict:
+    def register(email: str | None = None) -> dict:
         raw_key, prefix, key_hash = APIKeyManager.generate_key()
-        node_id = str(uuid.uuid4())
+        account_id = str(uuid.uuid4())
 
         with SessionLocal() as session:
             try:
@@ -57,7 +60,7 @@ class APIKeyManager:
                     key_prefix=prefix,
                     key_hash=key_hash,
                     email=email,
-                    node_id=node_id,
+                    account_id=account_id,
                     is_active=True,
                 )
                 session.add(api_key)
@@ -66,14 +69,7 @@ class APIKeyManager:
                 session.rollback()
                 raise
 
-        credit_service = CreditService()
-        credit_service.create_account(node_id, initial_balance=1000)
-
-        return {
-            'api_key': raw_key,
-            'node_id': node_id,
-            'balance': 1000,
-        }
+        return {'api_key': raw_key, 'account_id': account_id}
 
     @staticmethod
     def validate(raw_key: str) -> dict | None:
@@ -85,9 +81,16 @@ class APIKeyManager:
                 ).first()
                 if not record:
                     return None
-                record.last_used_at = datetime.utcnow()
+                info = {'account_id': record.account_id, 'email': record.email}
+                # Touch last_used_at at most every few minutes instead of
+                # writing on every authenticated request.
+                session.query(APIKey).filter(
+                    APIKey.id == record.id,
+                    or_(APIKey.last_used_at.is_(None),
+                        APIKey.last_used_at < func.now() - LAST_USED_RESOLUTION),
+                ).update({APIKey.last_used_at: func.now()}, synchronize_session=False)
                 session.commit()
-                return {'node_id': record.node_id, 'email': record.email}
+                return info
             except Exception:
                 session.rollback()
                 raise

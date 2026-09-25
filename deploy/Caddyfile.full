@@ -15,6 +15,10 @@
     handle /api/* {
         reverse_proxy localhost:8800
     }
+    # OpenAI-compatible API
+    handle /v1/* {
+        reverse_proxy localhost:8800
+    }
     handle /ws/* {
         reverse_proxy localhost:8800
     }

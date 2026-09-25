@@ -1,3 +1,4 @@
+# Requires GEMMANET_API_KEY (an API key from POST /api/v1/register).
 import logging
 import sys
 import os

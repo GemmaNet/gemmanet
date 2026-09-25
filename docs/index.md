@@ -1,14 +1,15 @@
 # GemmaNet
 
-**The Operating System for the AI Economy**
+**The Open Network for AI Services**
 
 GemmaNet is an open platform that lets developers turn any AI model
-into a node in a global AI services network.
+into a node in a global network of AI services.
 
 - **10 lines** to provide AI services
 - **5 lines** to consume AI services
 - **Model agnostic** - use any model you want
-- **Earn credits** for every request your node processes
+- **Reputation-based routing** - reliable, fast nodes get more requests
+- **OpenAI compatible** - works with the OpenAI SDK and LangChain
 
 ## Quick Links
 
@@ -20,5 +21,6 @@ into a node in a global AI services network.
 ## Install
 
 ```bash
-pip install gemmanet
+pip install gemmanet             # SDK
+pip install "gemmanet[server]"   # coordinator
 ```

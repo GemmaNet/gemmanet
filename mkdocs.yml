@@ -1,8 +1,8 @@
 site_name: GemmaNet Documentation
 site_url: https://gemmanet.net/docs/
-site_description: The Operating System for the AI Economy
-repo_url: https://github.com/gemmanet-ai/gemmanet
-repo_name: gemmanet-ai/gemmanet
+site_description: The Open Network for AI Services
+repo_url: https://github.com/gemmanet/gemmanet
+repo_name: gemmanet/gemmanet
 
 theme:
   name: material
@@ -21,6 +21,8 @@ nav:
   - API Reference: api_reference.md
   - Architecture: architecture.md
   - Examples: examples.md
+  - Design:
+      - Multi-Instance Coordinator: design/multi-instance.md
   - Terms of Service: terms.md
   - Privacy Policy: privacy.md
 

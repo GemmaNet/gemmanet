@@ -1,10 +1,29 @@
 """Reputation system: tracks and scores node reputation based on performance."""
-import time
 import json
-import redis.asyncio as aioredis
 import logging
+import time
+
+import redis.asyncio as aioredis
 
 logger = logging.getLogger('gemmanet.reputation')
+
+TASK_META_TTL = 3600  # how long a finished task can still be rated
+
+
+class RatingError(Exception):
+    """Base class for rejected ratings."""
+
+
+class TaskNotFound(RatingError):
+    pass
+
+
+class NotTaskOwner(RatingError):
+    pass
+
+
+class AlreadyRated(RatingError):
+    pass
 
 
 class ReputationSystem:
@@ -40,6 +59,33 @@ class ReputationSystem:
         key = f'{self.prefix}:ratings:{node_id}'
         await self.redis.lpush(key, str(rating))
         await self.redis.ltrim(key, 0, 99)  # keep last 100
+
+    async def remember_task(self, task_id: str, requester_id: str,
+                            node_ids: list[str]):
+        """Remember who requested a task and which nodes served it, for rating."""
+        await self.redis.set(
+            f'{self.prefix}:task:{task_id}',
+            json.dumps({'requester': requester_id, 'node_ids': node_ids}),
+            ex=TASK_META_TTL)
+
+    async def rate_task(self, task_id: str, requester_id: str, rating: int) -> list[str]:
+        """Apply a requester's rating to every node that served the task.
+
+        Only the account that requested the task may rate it, and only once.
+        """
+        raw = await self.redis.get(f'{self.prefix}:task:{task_id}')
+        if not raw:
+            raise TaskNotFound(task_id)
+        meta = json.loads(raw)
+        if meta.get('requester') != requester_id:
+            raise NotTaskOwner(task_id)
+        if not await self.redis.set(f'{self.prefix}:rated:{task_id}', '1',
+                                    nx=True, ex=TASK_META_TTL):
+            raise AlreadyRated(task_id)
+        node_ids = meta.get('node_ids', [])
+        for node_id in node_ids:
+            await self.record_user_rating(node_id, rating)
+        return node_ids
 
     async def get_score(self, node_id: str) -> float:
         """Get reputation score (0-100) for a node."""
@@ -110,14 +156,14 @@ class ReputationSystem:
 
     async def get_leaderboard(self, limit: int = 20) -> list[dict]:
         """Get top nodes by reputation score."""
+        stats_prefix = f'{self.prefix}:stats:'
         cursor = 0
         entries = []
         while True:
             cursor, keys = await self.redis.scan(
-                cursor=cursor, match=f'{self.prefix}:stats:*', count=100)
+                cursor=cursor, match=f'{stats_prefix}*', count=100)
             for key in keys:
-                node_id = key.split(':')[-1]
-                score = await self.get_score(node_id)
+                node_id = key[len(stats_prefix):]
                 stats = await self.get_stats(node_id)
                 entries.append({'node_id': node_id, **stats})
             if not cursor or str(cursor) == '0':
@@ -133,9 +179,9 @@ class ReputationSystem:
 
     async def check_and_suspend(self, node_id: str):
         """Suspend node if reputation is too low."""
-        score = await self.get_score(node_id)
         stats = await self.get_stats(node_id)
+        score = stats['score']
         if score < 35 and stats.get('total_tasks', 0) > 10:
-            await self.redis.setex(
-                f'{self.prefix}:suspended:{node_id}', 86400, '1')
+            await self.redis.set(
+                f'{self.prefix}:suspended:{node_id}', '1', ex=86400)
             logger.warning(f'Node {node_id} suspended: score={score}')
