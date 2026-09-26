@@ -32,9 +32,10 @@ CMD ["uvicorn", "gemmanet.coordinator.server:app", "--host", "0.0.0.0", "--port"
 FROM python:3.11-slim AS docs
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
+COPY docs/requirements.txt ./docs/requirements.txt
 RUN --mount=type=secret,id=ca,required=false \
     if [ -f /run/secrets/ca ]; then export PIP_CERT=/run/secrets/ca; fi; \
-    pip install "mkdocs-material>=9.5.0"
+    pip install -r docs/requirements.txt
 COPY mkdocs.yml ./
 COPY docs ./docs
 RUN mkdocs build --strict -d /site

@@ -97,6 +97,17 @@ jobs:
             --register --admin-key ci-admin \
             --version "$(grep -oP "__version__ = '\\K[^']+" src/gemmanet/__init__.py)"
 
+      - name: Smoke check with the site built for Cloudflare Pages
+        run: |
+          pip install -r docs/requirements.txt
+          GEMMANET_API_ORIGIN=http://api.localhost python scripts/build_pages.py
+          python -m http.server 8099 --directory pages-dist >/dev/null 2>&1 &
+          sleep 1
+          # http.server ignores _redirects (unit-tested instead)
+          docker run --rm --network host --add-host api.localhost:127.0.0.1 gemmanet-app \
+            python scripts/smoke_check.py --base http://localhost:8099 --api-base http://api.localhost \
+            --register --no-redirect-check
+
       - name: Seed nodes come online
         run: |
           KEY=$(curl -sf -X POST http://localhost/api/v1/register | python -c 'import sys, json; print(json.load(sys.stdin)["api_key"])')
