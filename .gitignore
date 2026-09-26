@@ -12,3 +12,4 @@ backups/
 .ruff_cache/
 ops/
 *.log
+pages-dist/

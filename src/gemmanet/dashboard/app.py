@@ -22,7 +22,11 @@ if STATIC_DIR.exists():
 @dashboard_app.get('/')
 async def index(request: Request):
     coordinator_url = os.getenv('COORDINATOR_URL', 'http://localhost:8800')
+    # The main website; its own origin when the site is on Cloudflare Pages.
+    site_url = os.getenv('GEMMANET_SITE_URL', '/')
+    docs_url = '/docs/' if site_url == '/' else site_url.rstrip('/') + '/docs/'
     return templates.TemplateResponse(
         request, 'index.html',
-        context={'coordinator_url': coordinator_url, 'version': __version__},
+        context={'coordinator_url': coordinator_url, 'version': __version__,
+                 'site_url': site_url, 'docs_url': docs_url},
     )

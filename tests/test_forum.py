@@ -77,3 +77,11 @@ def test_upvote_redirect_stays_on_forum(client):
     back = client.post('/upvote/1', headers={'referer': 'http://testserver/talk/post/1?x=1'},
                        follow_redirects=False)
     assert back.headers['location'] == '/talk/post/1?x=1'
+
+
+def test_home_link_follows_site_url(client, monkeypatch):
+    assert 'href="/"' in client.get('/').text
+    monkeypatch.setenv('GEMMANET_SITE_URL', 'https://gemmanet.net')
+    page = client.get('/').text
+    assert page.count('href="https://gemmanet.net"') == 2  # header and footer
+    assert 'href="/"' not in page

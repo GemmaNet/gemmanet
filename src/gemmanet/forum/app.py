@@ -1,5 +1,6 @@
 import html
 import math
+import os
 import re
 import time
 from collections import defaultdict
@@ -115,14 +116,20 @@ def calculate_score(upvotes: int, hours: float) -> float:
     return upvotes / math.pow(hours + 2, 1.5)
 
 
+def site_url() -> str:
+    """The main website (e.g. https://gemmanet.net when the site is on Pages)."""
+    return html.escape(os.getenv('GEMMANET_SITE_URL', '/'), quote=True)
+
+
 def render_page(title: str, body: str) -> HTMLResponse:
+    home = site_url()
     h = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} - Talk</title><style>{CSS}</style></head><body>
-<div class="header" style="display:flex;justify-content:space-between;align-items:center;"><a href="/talk/">Talk</a><a href="/" style="color:#999;font-size:14px;">GemmaNet</a></div>
+<div class="header" style="display:flex;justify-content:space-between;align-items:center;"><a href="/talk/">Talk</a><a href="{home}" style="color:#999;font-size:14px;">GemmaNet</a></div>
 <div class="nav"><a href="/talk/">New</a> <a href="/talk/?sort=top">Top</a> <a href="/talk/?sort=ask">Ask</a></div>
 {body}
-<div class="footer">Text only. No images. No distractions. | <a href="/">GemmaNet</a></div>
+<div class="footer">Text only. No images. No distractions. | <a href="{home}">GemmaNet</a></div>
 </body></html>"""
     return HTMLResponse(h)
 

@@ -1,11 +1,17 @@
 """Post-deploy smoke check for a GemmaNet site.
 
-Checks the public pages and APIs and, given an API key, runs a real task end
-to end: a temporary node connects over WebSocket, and a request, a stream and
-an OpenAI-style call are routed to it.
+Checks the main site (--base: website, docs) and the coordinator
+(--api-base: dashboard, forum, APIs) and, given an API key, runs a real task
+end to end: a temporary node connects over WebSocket, and a request, a stream
+and an OpenAI-style call are routed to it.
 
-    python scripts/smoke_check.py --base https://gemmanet.net --api-key gn_...
-    python scripts/smoke_check.py --base http://localhost --register   # CI
+    # website on Cloudflare Pages, coordinator on the VM
+    python scripts/smoke_check.py --base https://gemmanet.net \\
+        --api-base https://api.gemmanet.net --api-key gn_...
+    # coordinator only
+    python scripts/smoke_check.py --api-base https://api.gemmanet.net --api-key gn_...
+    # everything on one host
+    python scripts/smoke_check.py --base http://localhost --register
 
 Exits non-zero if any check fails.
 """
@@ -121,35 +127,44 @@ def run_end_to_end(report: Report, base: str, api_key: str):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--base', required=True, help='site URL, e.g. https://gemmanet.net')
-    parser.add_argument('--api-base', help='API host URL to check too, e.g. https://api.gemmanet.net')
+    parser.add_argument('--base', help='main site (website + docs), e.g. https://gemmanet.net')
+    parser.add_argument('--api-base',
+                        help='coordinator (API, dashboard, forum), e.g. https://api.gemmanet.net; '
+                             'defaults to --base')
     parser.add_argument('--api-key', help='API key for the end-to-end checks')
     parser.add_argument('--register', action='store_true',
                         help='register a new API key for the end-to-end checks')
     parser.add_argument('--admin-key', help='ADMIN_KEY, to check the feedback endpoint')
     parser.add_argument('--version', help='expected coordinator version')
+    parser.add_argument('--no-redirect-check', action='store_true',
+                        help='skip checking that the main site forwards API paths '
+                             '(for static servers that ignore _redirects)')
     args = parser.parse_args()
-    base = args.base.rstrip('/')
+    if not args.base and not args.api_base:
+        parser.error('give --base, --api-base or both')
+    base = args.base.rstrip('/') if args.base else None
+    api = (args.api_base or args.base).rstrip('/')
     report = Report()
     http = httpx.Client(timeout=20, follow_redirects=True)
 
-    def website():
-        resp = get(http, f'{base}/')
-        expect(SLOGAN in resp.text, 'slogan missing: is this still the old site?')
-    report.check('website', website)
+    if base:
+        def website():
+            resp = get(http, f'{base}/')
+            expect(SLOGAN in resp.text, 'slogan missing: is this still the old site?')
+        report.check('website', website)
 
-    def docs():
-        expect('GemmaNet' in get(http, f'{base}/docs/').text, 'unexpected docs page')
-    report.check('docs', docs)
+        def docs():
+            expect('GemmaNet' in get(http, f'{base}/docs/').text, 'unexpected docs page')
+        report.check('docs', docs)
 
     def dashboard():
-        expect(SLOGAN in get(http, f'{base}/dashboard/').text, 'unexpected dashboard page')
+        expect(SLOGAN in get(http, f'{api}/dashboard/').text, 'unexpected dashboard page')
     report.check('dashboard', dashboard)
 
-    report.check('forum', lambda: get(http, f'{base}/talk/') and None)
+    report.check('forum', lambda: get(http, f'{api}/talk/') and None)
 
     def status():
-        data = get(http, f'{base}/api/v1/status').json()
+        data = get(http, f'{api}/api/v1/status').json()
         expect(data.get('status') == 'running', f'status {data}')
         if args.version:
             expect(data.get('version') == args.version, f'version {data.get("version")}')
@@ -157,24 +172,31 @@ def main() -> int:
     report.check('coordinator status', status)
 
     def models():
-        ids = [m['id'] for m in get(http, f'{base}/v1/models').json()['data']]
+        ids = [m['id'] for m in get(http, f'{api}/v1/models').json()['data']]
         expect('gemmanet/auto' in ids, f'models {ids}')
     report.check('OpenAI models endpoint', models)
 
-    if args.api_base:
-        api_base = args.api_base.rstrip('/')
+    if base and base != api:
+        site_origin = '/'.join(base.split('/')[:3])
 
-        def api_host():
-            data = get(http, f'{api_base}/api/v1/status').json()
-            expect(data.get('status') == 'running', f'status {data}')
-            get(http, f'{api_base}/v1/models')
-        report.check('API host', api_host)
+        def cross_origin():
+            # The homepage fetches the forum preview from the API origin.
+            resp = get(http, f'{api}/talk/api/recent', headers={'Origin': site_origin})
+            allowed = resp.headers.get('access-control-allow-origin')
+            expect(allowed in ('*', site_origin), f'access-control-allow-origin: {allowed}')
+        report.check('website may call the API (CORS)', cross_origin)
+
+        if not args.no_redirect_check:
+            def forwards_api_paths():
+                data = get(http, f'{base}/api/v1/status').json()
+                expect(data.get('status') == 'running', f'status {data}')
+            report.check('main site forwards API paths', forwards_api_paths)
 
     if args.admin_key:
         def feedback_admin():
-            expect(http.get(f'{base}/api/v1/feedback').status_code == 401,
+            expect(http.get(f'{api}/api/v1/feedback').status_code == 401,
                    'feedback readable without ADMIN_KEY')
-            get(http, f'{base}/api/v1/feedback',
+            get(http, f'{api}/api/v1/feedback',
                 headers={'Authorization': f'Bearer {args.admin_key}'})
         report.check('feedback requires ADMIN_KEY', feedback_admin)
 
@@ -182,13 +204,14 @@ def main() -> int:
     if args.register and not api_key:
         def register():
             nonlocal api_key
-            resp = http.post(f'{base}/api/v1/register', json={})
+            resp = http.post(f'{api}/api/v1/register', json={})
             expect(resp.status_code == 200, f'HTTP {resp.status_code}: {resp.text[:200]}')
             api_key = resp.json()['api_key']
+            return f'key {api_key[:11]}... (save it: registration is limited to 5/hour)'
         report.check('register API key', register)
 
     if api_key:
-        run_end_to_end(report, base, api_key)
+        run_end_to_end(report, api, api_key)
     else:
         print('(no --api-key/--register: skipping the end-to-end checks)\n')
 
