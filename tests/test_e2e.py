@@ -3,6 +3,8 @@
 Needs PostgreSQL (DATABASE_URL) and Redis; uses its own Redis database
 (E2E_REDIS_URL, default db 2), which it flushes.
 """
+import contextlib
+import json
 import os
 import socket
 import subprocess
@@ -17,6 +19,10 @@ from gemmanet import Client, Completion, Node
 from gemmanet.sdk.exceptions import AuthenticationError, GemmaNetError
 
 E2E_REDIS_URL = os.getenv('E2E_REDIS_URL', 'redis://localhost:6379/2')
+# Coordinators with lowered limits run next to the main one; each needs its
+# own Redis database (one coordinator per database).
+LIMITS_REDIS_URL = E2E_REDIS_URL.rsplit('/', 1)[0] + '/3'
+RATE_REDIS_URL = E2E_REDIS_URL.rsplit('/', 1)[0] + '/4'
 
 pytestmark = pytest.mark.skipif(not os.getenv('DATABASE_URL'),
                                 reason='needs DATABASE_URL and Redis')
@@ -32,7 +38,9 @@ def _start_coordinator(tmp_path, port, **extra_env):
     log = open(tmp_path / f'coordinator-{port}.log', 'w')
     env = {**os.environ, 'REDIS_URL': E2E_REDIS_URL,
            'FORUM_DB': str(tmp_path / 'forum.db'), 'ADMIN_KEY': 'e2e-admin',
-           'GEMMANET_TASK_TIMEOUT': '5', 'LOG_LEVEL': 'WARNING', **extra_env}
+           'GEMMANET_TASK_TIMEOUT': '5', 'LOG_LEVEL': 'WARNING',
+           # the suite opens many node connections from one address
+           'GEMMANET_WS_CONNECTS_PER_MINUTE': '1000', **extra_env}
     proc = subprocess.Popen(
         [sys.executable, '-m', 'uvicorn', 'gemmanet.coordinator.server:app',
          '--host', '127.0.0.1', '--port', str(port)],
@@ -48,9 +56,14 @@ def base_url(tmp_path_factory):
     except redis.exceptions.ConnectionError:
         pytest.skip('Redis not available')
 
-    tmp_path = tmp_path_factory.mktemp('e2e')
+    with _running_coordinator(tmp_path_factory.mktemp('e2e')) as url:
+        yield url
+
+
+@contextlib.contextmanager
+def _running_coordinator(tmp_path, **extra_env):
     port = _free_port()
-    proc, log = _start_coordinator(tmp_path, port)
+    proc, log = _start_coordinator(tmp_path, port, **extra_env)
     url = f'http://127.0.0.1:{port}'
     for _ in range(150):
         try:
@@ -62,10 +75,12 @@ def base_url(tmp_path_factory):
         proc.terminate()
         pytest.fail('coordinator did not start: '
                     + (tmp_path / f'coordinator-{port}.log').read_text())
-    yield url
-    proc.terminate()
-    proc.wait(timeout=10)
-    log.close()
+    try:
+        yield url
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+        log.close()
 
 
 @pytest.fixture(scope='module')
@@ -312,3 +327,139 @@ def test_second_coordinator_refuses_to_start(base_url, tmp_path):
     finally:
         log.close()
     assert 'Another GemmaNet coordinator' in (tmp_path / f'coordinator-{port}.log').read_text()
+
+
+# --- Resource limits (docs/design/security-hardening.md, M4) ---
+
+@pytest.fixture(scope='module')
+def limited_url(base_url, tmp_path_factory):
+    import redis
+    redis.Redis.from_url(LIMITS_REDIS_URL).flushdb()
+    with _running_coordinator(tmp_path_factory.mktemp('limits'), REDIS_URL=LIMITS_REDIS_URL,
+                              GEMMANET_MAX_NODES_PER_ACCOUNT='2',
+                              GEMMANET_WS_MAX_MESSAGE_BYTES='65536',
+                              GEMMANET_MAX_RESULT_BYTES='1000') as url:
+        yield url
+
+
+@pytest.fixture
+def run_limited_node(limited_url, keys):
+    started = []
+
+    def start(name, handlers, key='owner', wait=True):
+        node = RunningNode(limited_url, keys[key]['api_key'], name, handlers)
+        started.append(node)
+        return node.wait_registered() if wait else node
+
+    yield start
+    for node in started:
+        node.stop()
+
+
+def _online_names(url):
+    return sorted(n['name'] for n in httpx.get(f'{url}/api/v1/nodes').json())
+
+
+def test_request_body_over_2mb_is_refused(base_url, keys):
+    headers = {'Authorization': f'Bearer {keys["client"]["api_key"]}',
+               'Content-Type': 'application/json'}
+    big = json.dumps({'task_type': 'echo', 'content': 'x' * 2_000_000})
+    for path in ('/api/v1/request', '/v1/chat/completions', '/api/v1/feedback'):
+        assert httpx.post(f'{base_url}{path}', content=big, headers=headers).status_code == 413
+
+
+def test_node_connections_are_rate_limited_per_ip(base_url, tmp_path):
+    import redis
+    from websockets.exceptions import InvalidStatus
+    from websockets.sync.client import connect
+    redis.Redis.from_url(RATE_REDIS_URL).flushdb()
+    with _running_coordinator(tmp_path, REDIS_URL=RATE_REDIS_URL,
+                              GEMMANET_WS_CONNECTS_PER_MINUTE='3') as url:
+        ws_url = url.replace('http://', 'ws://') + '/ws/node'
+        for _ in range(3):
+            with connect(ws_url):
+                pass
+        with pytest.raises(InvalidStatus) as refused:
+            connect(ws_url)
+        assert refused.value.response.status_code == 403
+        # The SDK treats a refused handshake as temporary: it keeps retrying
+        # with backoff instead of crashing.
+        node = RunningNode(url, 'gn_whatever', 'patient', {'echo': lambda c, **p: c})
+        time.sleep(2.5)
+        assert node.thread.is_alive() and node.error is None
+        node.stop()
+
+
+def test_nodes_per_account_are_capped(run_limited_node, limited_url):
+    run_limited_node('cap-1', {'echo': lambda c, **p: c})
+    run_limited_node('cap-2', {'echo': lambda c, **p: c})
+    third = run_limited_node('cap-3', {'echo': lambda c, **p: c}, wait=False)
+    third.thread.join(10)
+    assert isinstance(third.error, GemmaNetError) and 'at most 2 nodes' in str(third.error)
+    # Reconnecting under the same name replaces the node; it does not count twice.
+    run_limited_node('cap-1', {'echo': lambda c, **p: c})
+    # Other accounts have their own allowance.
+    run_limited_node('cap-other', {'echo': lambda c, **p: c}, key='other')
+    time.sleep(0.3)
+    assert _online_names(limited_url) == ['cap-1', 'cap-2', 'cap-other']
+
+
+def test_concurrent_registrations_cannot_overshoot_the_cap(run_limited_node, limited_url):
+    racers = [run_limited_node(f'race-{i}', {'echo': lambda c, **p: c}, wait=False)
+              for i in range(6)]
+    for node in racers:
+        node.node._registered.wait(5)
+    time.sleep(1)
+    assert len([n for n in _online_names(limited_url) if n.startswith('race-')]) == 2
+
+
+def test_oversized_node_message_closes_the_connection(limited_url, keys):
+    from websockets.exceptions import ConnectionClosed
+    from websockets.sync.client import connect
+
+    from gemmanet.sdk.models import MsgType, make_ws_msg
+
+    with connect(limited_url.replace('http://', 'ws://') + '/ws/node') as ws:
+        ws.send(make_ws_msg(MsgType.NODE_REGISTER, {
+            'api_key': keys['owner']['api_key'], 'name': 'chatty', 'capabilities': ['echo']}))
+        assert json.loads(ws.recv())['msg_type'] == 'node_registered'
+        ws.send(make_ws_msg(MsgType.HEARTBEAT, {'padding': 'x' * 70_000}))
+        with pytest.raises(ConnectionClosed) as closed:
+            while True:
+                ws.recv(timeout=5)
+        assert closed.value.rcvd.code == 1009
+
+
+def test_result_over_the_limit_fails_cleanly(run_limited_node, limited_url, keys):
+    def big_stream(content, **params):
+        for _ in range(3):
+            yield 'y' * 600
+
+    node = run_limited_node('verbose', {
+        'fits': lambda c, **p: 'x' * 1000,
+        'big': lambda c, **p: 'x' * 1001,
+        'bigstream': big_stream,
+    })
+    headers = {'Authorization': f'Bearer {keys["client"]["api_key"]}'}
+    with client_for(limited_url, keys) as client:
+        assert client.request('fits', 'go').result == 'x' * 1000
+        resp = httpx.post(f'{limited_url}/api/v1/request', headers=headers,
+                          json={'task_type': 'big', 'content': 'go'})
+        assert resp.status_code == 502 and 'more than 1000 bytes' in resp.text
+
+        resp = httpx.post(f'{limited_url}/api/v1/request', headers=headers, timeout=10,
+                          json={'task_type': 'bigstream', 'content': 'go', 'stream': True})
+        events = [json.loads(line[6:]) for line in resp.text.splitlines()
+                  if line.startswith('data: ')]
+        assert events[0] == {'delta': 'y' * 600}
+        assert events[-1]['error']['code'] == 'result_too_large'
+
+        resp = httpx.post(f'{limited_url}/v1/chat/completions', headers=headers,
+                          json={'model': 'gemmanet/big',
+                                'messages': [{'role': 'user', 'content': 'go'}]})
+        assert resp.status_code == 502 and resp.json()['error']['code'] == 'result_too_large'
+
+        # The node stays connected and usable.
+        assert client.request('fits', 'again').result == 'x' * 1000
+    rep = httpx.get(f'{limited_url}/api/v1/reputation/{node.node.node_id}').json()
+    assert rep['total_tasks'] == 5 and rep['success_rate'] == 0.4

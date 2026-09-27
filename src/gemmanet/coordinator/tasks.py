@@ -10,6 +10,10 @@ class NodeDisconnected(Exception):
     """The node holding a task went away before returning a result."""
 
 
+class ResultTooLarge(Exception):
+    """The node sent more result text than the coordinator accepts."""
+
+
 @dataclass
 class PendingTask:
     task_id: str
@@ -18,6 +22,7 @@ class PendingTask:
     events: asyncio.Queue = field(default_factory=asyncio.Queue)
     created_at: float = field(default_factory=lambda: asyncio.get_running_loop().time())
     finished_at: float | None = None
+    streamed_bytes: int = 0
 
     @property
     def elapsed_ms(self) -> int:
@@ -32,9 +37,13 @@ class TaskTracker:
     so a node can only answer tasks it was actually given.
     """
 
-    def __init__(self, max_age: float | None = None):
+    def __init__(self, max_age: float | None = None, max_result_bytes: int | None = None):
         self._tasks: dict[str, PendingTask] = {}
         self.max_age = max_age
+        # Bounds both the streamed chunks of a task (in total) and its final
+        # result text, so a node cannot make the coordinator buffer or relay
+        # unbounded output.
+        self.max_result_bytes = max_result_bytes
 
     def create(self, task_id: str, node_id: str, connection) -> PendingTask:
         task = PendingTask(task_id=task_id, node_id=node_id, connection=connection)
@@ -68,23 +77,40 @@ class TaskTracker:
             return None
         return task
 
+    def _too_large(self, size: int) -> bool:
+        return self.max_result_bytes is not None and size > self.max_result_bytes
+
+    def _fail(self, task: PendingTask, error: Exception):
+        task.finished_at = asyncio.get_running_loop().time()
+        task.events.put_nowait(('error', error))
+
     def add_chunk(self, task_id: str, connection, delta: str):
         task = self._owned(task_id, connection)
-        if task is not None and task.finished_at is None:
-            task.events.put_nowait(('chunk', delta))
+        if task is None or task.finished_at is not None:
+            return
+        task.streamed_bytes += len(delta.encode())
+        if self._too_large(task.streamed_bytes):
+            logger.warning('Task %s streamed more than %s bytes', task_id, self.max_result_bytes)
+            self._fail(task, ResultTooLarge(task.node_id))
+            return
+        task.events.put_nowait(('chunk', delta))
 
     def resolve(self, task_id: str, connection, payload: dict):
         task = self._owned(task_id, connection)
-        if task is not None and task.finished_at is None:
-            task.finished_at = asyncio.get_running_loop().time()
-            task.events.put_nowait(('result', payload))
+        if task is None or task.finished_at is not None:
+            return
+        if self._too_large(len(str(payload.get('result', '')).encode())):
+            logger.warning('Task %s returned more than %s bytes', task_id, self.max_result_bytes)
+            self._fail(task, ResultTooLarge(task.node_id))
+            return
+        task.finished_at = asyncio.get_running_loop().time()
+        task.events.put_nowait(('result', payload))
 
     def fail_connection(self, connection):
         """Fail every unfinished task that was sent on a closed connection."""
         for task in self._tasks.values():
             if task.connection is connection and task.finished_at is None:
-                task.finished_at = asyncio.get_running_loop().time()
-                task.events.put_nowait(('error', NodeDisconnected(task.node_id)))
+                self._fail(task, NodeDisconnected(task.node_id))
 
 
 async def next_event(task: PendingTask, deadline: float) -> tuple[str, object]:

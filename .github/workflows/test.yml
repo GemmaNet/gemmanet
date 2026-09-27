@@ -97,6 +97,16 @@ jobs:
             --register --admin-key ci-admin \
             --version "$(grep -oP "__version__ = '\\K[^']+" src/gemmanet/__init__.py)"
 
+      - name: Caddy refuses bodies over 2 MB and hides _headers
+        run: |
+          head -c 2100000 /dev/zero > big.bin
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @big.bin \
+            -H 'Content-Type: application/json' http://api.localhost/api/v1/request \
+            --resolve api.localhost:80:127.0.0.1)
+          echo "2.1 MB body: HTTP $code"; test "$code" = 413
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/_headers)
+          echo "/_headers: HTTP $code"; test "$code" = 404
+
       - name: Smoke check with the site built for Cloudflare Pages
         run: |
           pip install -r docs/requirements.txt
@@ -121,6 +131,9 @@ jobs:
           echo "online nodes: $n"
           test "$n" -ge 3
 
+      - name: Every container is hardened
+        run: python3 scripts/check_hardening.py --expect 7
+
       - name: TLS_MODE=origin-mtls admits only the AOP client certificate
         run: |
           # Throwaway certificates: origin (server), the AOP CA and a client
@@ -133,8 +146,13 @@ jobs:
           gen rogue-ca
           gen aop-client -CA $d/aop-ca.pem -CAkey $d/aop-ca.key -addext extendedKeyUsage=clientAuth
           gen rogue-client -CA $d/rogue-ca.pem -CAkey $d/rogue-ca.key -addext extendedKeyUsage=clientAuth
+          # Caddy runs as uid 10002; these files are throwaway
+          chmod 755 $d && chmod 644 $d/*
           net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q coordinator)")
+          # Hardened as in docker-compose.yml, like the VM runs it
           docker run -d --name mtls-caddy --network "$net" -p 8443:443 \
+            --cap-drop ALL --security-opt no-new-privileges:true --read-only \
+            --tmpfs /data:uid=10002,gid=10002,mode=0700 --tmpfs /config:uid=10002,gid=10002,mode=0700 \
             -e SITE_ADDRESSES=api.localhost -e API_HOST=api.localhost -e TLS_MODE=origin-mtls \
             -v "$d:/certs:ro" gemmanet-web
           fetch() { curl -s -o /dev/null -w '%{http_code}' --resolve api.localhost:8443:127.0.0.1 \

@@ -23,6 +23,7 @@ nav:
   - Examples: examples.md
   - Design:
       - Multi-Instance Coordinator: design/multi-instance.md
+      - Security Audit Follow-ups: design/security-hardening.md
   - Terms of Service: terms.md
   - Privacy Policy: privacy.md
 

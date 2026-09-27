@@ -48,7 +48,7 @@ Repository = "https://github.com/gemmanet/gemmanet"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gemmanet = ["dashboard/templates/*.html"]
+gemmanet = ["dashboard/templates/*.html", "dashboard/static/*.js"]
 
 [tool.ruff]
 line-length = 100

@@ -68,8 +68,12 @@ against the site as built for Pages.
    `deploy/certs/origin.key` yourself (e.g. with `nano`); the key should not
    pass through chats or tickets. Then check:
 
+   Caddy runs as uid/gid 10002 without any capabilities, so it reads the files
+   through their group; nobody else can:
+
    ```bash
-   chmod 600 deploy/certs/origin.key
+   sudo chgrp 10002 deploy/certs/origin.pem deploy/certs/origin.key
+   sudo chmod 640 deploy/certs/origin.pem deploy/certs/origin.key
    openssl x509 -in deploy/certs/origin.pem -noout -subject -dates -ext subjectAltName
    # certificate and key belong together if these two hashes match:
    openssl x509 -in deploy/certs/origin.pem -noout -pubkey | sha256sum
@@ -186,6 +190,7 @@ certificate. Do steps 1 and 2 first, and switch the mode last.
    you run (`docker compose build caddy` after updating the checkout):
 
    ```bash
+   sudo chgrp 10002 deploy/certs/aop-ca.pem && sudo chmod 640 deploy/certs/aop-ca.pem
    openssl x509 -in deploy/certs/aop-ca.pem -noout -subject -dates
    # if you have the client certificate you uploaded (certificate only):
    openssl verify -CAfile deploy/certs/aop-ca.pem client.pem    # "client.pem: OK"

@@ -1,6 +1,7 @@
 """FastAPI dashboard app (Jinja2 HTML)."""
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,27 @@ STATIC_DIR = Path(__file__).parent / 'static'
 dashboard_app = FastAPI(title='GemmaNet Dashboard', version=__version__)
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+
+def content_security_policy() -> str:
+    """No inline scripts: the dashboard keeps the user's API key in localStorage.
+
+    The page calls the API at COORDINATOR_URL, normally its own origin.
+    """
+    connect = ["'self'"]
+    url = urlsplit(os.getenv('COORDINATOR_URL', 'http://localhost:8800'))
+    if url.scheme in ('http', 'https') and url.netloc:
+        connect.append(f'{url.scheme}://{url.netloc}')
+    return ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            f"connect-src {' '.join(connect)}; img-src 'self' data:; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
+
+@dashboard_app.middleware('http')
+async def add_csp(request: Request, call_next):
+    response = await call_next(request)
+    response.headers['Content-Security-Policy'] = content_security_policy()
+    return response
 
 if STATIC_DIR.exists():
     dashboard_app.mount('/static', StaticFiles(directory=str(STATIC_DIR)), name='static')

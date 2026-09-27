@@ -26,6 +26,13 @@ from gemmanet import Client, Node
 
 SLOGAN = 'The Open Network for AI Services'
 SMOKE_CAPABILITY = 'smoke-echo'  # unique, so real traffic never lands on the smoke node
+# Set by the Caddyfile on the coordinator host and by website/_headers on Pages.
+SECURITY_HEADERS = {
+    'strict-transport-security': 'max-age=',
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+}
 
 
 class Report:
@@ -57,6 +64,17 @@ def get(http: httpx.Client, url: str, **kwargs) -> httpx.Response:
     resp = http.get(url, **kwargs)
     expect(resp.status_code == 200, f'HTTP {resp.status_code} for {url}')
     return resp
+
+
+def expect_security_headers(resp: httpx.Response, csp: bool = False):
+    for name, value in SECURITY_HEADERS.items():
+        expect(resp.headers.get(name, '').startswith(value),
+               f'{name}: {resp.headers.get(name)!r} on {resp.url}')
+    if csp:
+        policy = resp.headers.get('content-security-policy', '')
+        script_src = next((d for d in policy.split(';') if d.strip().startswith('script-src')), '')
+        expect(script_src and "'unsafe-inline'" not in script_src,
+               f'content-security-policy: {policy!r} on {resp.url}')
 
 
 def smoke_handler(content, **params):
@@ -137,8 +155,8 @@ def main() -> int:
     parser.add_argument('--admin-key', help='ADMIN_KEY, to check the feedback endpoint')
     parser.add_argument('--version', help='expected coordinator version')
     parser.add_argument('--no-redirect-check', action='store_true',
-                        help='skip checking that the main site forwards API paths '
-                             '(for static servers that ignore _redirects)')
+                        help="skip the main site's _redirects and _headers checks "
+                             '(for plain static servers, e.g. python -m http.server)')
     args = parser.parse_args()
     if not args.base and not args.api_base:
         parser.error('give --base, --api-base or both')
@@ -151,6 +169,8 @@ def main() -> int:
         def website():
             resp = get(http, f'{base}/')
             expect(SLOGAN in resp.text, 'slogan missing: is this still the old site?')
+            if not args.no_redirect_check:
+                expect_security_headers(resp)
         report.check('website', website)
 
         def docs():
@@ -158,13 +178,19 @@ def main() -> int:
         report.check('docs', docs)
 
     def dashboard():
-        expect(SLOGAN in get(http, f'{api}/dashboard/').text, 'unexpected dashboard page')
+        resp = get(http, f'{api}/dashboard/')
+        expect(SLOGAN in resp.text, 'unexpected dashboard page')
+        expect_security_headers(resp, csp=True)
     report.check('dashboard', dashboard)
 
-    report.check('forum', lambda: get(http, f'{api}/talk/') and None)
+    def forum():
+        expect_security_headers(get(http, f'{api}/talk/'), csp=True)
+    report.check('forum', forum)
 
     def status():
-        data = get(http, f'{api}/api/v1/status').json()
+        resp = get(http, f'{api}/api/v1/status')
+        expect_security_headers(resp)
+        data = resp.json()
         expect(data.get('status') == 'running', f'status {data}')
         if args.version:
             expect(data.get('version') == args.version, f'version {data.get("version")}')

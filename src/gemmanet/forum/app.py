@@ -8,11 +8,48 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from gemmanet.forum.database import get_db
 
 forum_app = FastAPI()
+
+# The pages' only script is /talk/forum.js; inline scripts are refused.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; "
+    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
+# Character counters for the post and reply forms.
+FORUM_JS = """document.querySelectorAll('textarea[data-counter]').forEach(function (t) {
+  var counter = document.getElementById(t.dataset.counter);
+  t.addEventListener('input', function () {
+    counter.textContent = t.value.length + '/' + t.maxLength;
+  });
+});
+"""
+
+
+@forum_app.middleware('http')
+async def security_checks(request: Request, call_next):
+    if request.method == 'POST' and not _same_origin(request):
+        # CSRF: another site's page must not post (or vote) in a visitor's name.
+        return JSONResponse({'detail': 'Cross-origin request refused'}, status_code=403)
+    response = await call_next(request)
+    response.headers['Content-Security-Policy'] = CONTENT_SECURITY_POLICY
+    return response
+
+
+def _same_origin(request: Request) -> bool:
+    """Origin (or, without it, Referer) must name this host.
+
+    Browsers send Origin with every cross-site form post ("null" when the
+    origin is withheld, which is refused too); requests with neither header
+    come from non-browser clients, which cannot act for a victim.
+    """
+    source = request.headers.get('origin') or request.headers.get('referer')
+    if source is None:
+        return True
+    return urlsplit(source).netloc == request.headers.get('host', '')
 
 # Rate limiting: {ip: [timestamps]}
 _rate_posts = defaultdict(list)
@@ -130,8 +167,14 @@ def render_page(title: str, body: str) -> HTMLResponse:
 <div class="nav"><a href="/talk/">New</a> <a href="/talk/?sort=top">Top</a> <a href="/talk/?sort=ask">Ask</a></div>
 {body}
 <div class="footer">Text only. No images. No distractions. | <a href="{home}">GemmaNet</a></div>
+<script src="/talk/forum.js"></script>
 </body></html>"""
     return HTMLResponse(h)
+
+
+@forum_app.get('/forum.js')
+async def forum_js():
+    return Response(FORUM_JS, media_type='text/javascript')
 
 
 @forum_app.get('/api/recent')
@@ -236,7 +279,7 @@ async def post_detail(post_id: int):
 
     body += f"""<div style="margin-top:16px">
 <form method="post" action="/talk/reply/{post_id}">
-<textarea name="content" rows="3" maxlength="300" placeholder="Reply (max 300 chars)" oninput="document.getElementById('rc').textContent=this.value.length+'/300'"></textarea>
+<textarea name="content" rows="3" maxlength="300" placeholder="Reply (max 300 chars)" data-counter="rc"></textarea>
 <span class="counter" id="rc">0/300</span><br>
 <input name="username" placeholder="username (optional)" maxlength="30" style="margin:4px 0">
 <button type="submit">Reply</button>
@@ -251,7 +294,7 @@ async def compose():
     opts = ''.join(f'<option value="{c}">{c.title()}</option>' for c in CATEGORIES)
     body = f"""<div style="margin-bottom:8px">No images. No links. Just text.</div>
 <form method="post" action="/talk/submit">
-<textarea name="content" rows="6" maxlength="500" placeholder="What's on your mind? (max 500 chars)" oninput="document.getElementById('cc').textContent=this.value.length+'/500'"></textarea>
+<textarea name="content" rows="6" maxlength="500" placeholder="What's on your mind? (max 500 chars)" data-counter="cc"></textarea>
 <span class="counter" id="cc">0/500</span><br>
 <input name="username" placeholder="username (optional)" maxlength="30" style="margin:4px 0">
 <select name="category" style="margin:4px 0">{opts}</select>

@@ -1,0 +1,6 @@
+# Cloudflare Pages response headers (the coordinator's Caddyfile sets the same).
+/*
+  Strict-Transport-Security: max-age=86400
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin

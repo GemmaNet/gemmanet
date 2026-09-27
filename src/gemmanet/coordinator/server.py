@@ -32,6 +32,15 @@ from gemmanet import __version__
 from gemmanet.coordinator.auth import APIKeyManager, Feedback
 from gemmanet.coordinator.database import SessionLocal, init_db
 from gemmanet.coordinator.instance_lock import SingleInstanceLock
+from gemmanet.coordinator.limits import (
+    MAX_NODES_PER_ACCOUNT,
+    MAX_RESULT_BYTES,
+    WS_CONNECTS_PER_MINUTE,
+    WS_MAX_MESSAGE_BYTES,
+    BodySizeLimitMiddleware,
+    SlidingWindowLimiter,
+    check_params,
+)
 from gemmanet.coordinator.registry import NodeRegistry
 from gemmanet.coordinator.reputation import (
     AlreadyRated,
@@ -43,6 +52,7 @@ from gemmanet.coordinator.router import RoutingEngine
 from gemmanet.coordinator.tasks import (
     NodeDisconnected,
     PendingTask,
+    ResultTooLarge,
     TaskTracker,
     next_event,
     wait_result,
@@ -73,12 +83,13 @@ TASK_TIMEOUT_MS = int(TASK_TIMEOUT * 1000)
 # A stream may run longer than TASK_TIMEOUT as long as chunks keep arriving
 # (TASK_TIMEOUT then bounds the silence between chunks), up to this cap.
 STREAM_MAX_SECONDS = float(os.getenv('GEMMANET_STREAM_MAX_SECONDS', '600'))
-REGISTER_TIMEOUT = 30
+REGISTER_TIMEOUT = 10
 MAX_CONTENT_CHARS = 200_000
 DISPATCH_ATTEMPTS = 3
 SPLIT_CHUNKS = 3
 
 CLOSE_POLICY_VIOLATION = 1008
+CLOSE_MESSAGE_TOO_BIG = 1009
 CLOSE_AUTH_FAILED = 4001
 
 # Node ids are derived from (account, node name) so a node keeps its
@@ -92,6 +103,7 @@ BENCHMARK_PROMPTS = [
 ]
 BENCHMARK_TTL = 6 * 3600  # 6 hours
 BENCHMARK_REPLY_TIMEOUT = 300  # give up waiting and re-benchmark later
+RESULT_TOO_LARGE_MESSAGE = f'The node returned more than {MAX_RESULT_BYTES} bytes'
 
 
 class NoNodeAvailable(Exception):
@@ -178,6 +190,7 @@ async def process_benchmark_result(registry: NodeRegistry, node_id: str,
 
 
 limiter = Limiter(key_func=get_remote_address)
+ws_connect_limiter = SlidingWindowLimiter(WS_CONNECTS_PER_MINUTE, window=60)
 
 
 class RequestBody(BaseModel):
@@ -190,11 +203,7 @@ class RequestBody(BaseModel):
     @field_validator('params')
     @classmethod
     def _check_params(cls, value: dict) -> dict:
-        # params become handler keyword arguments on the node
-        for key in value:
-            if not key.isidentifier() or key == 'content':
-                raise ValueError(f'invalid params key: {key!r}')
-        return value
+        return check_params(value)
 
 
 class RegisterBody(BaseModel):
@@ -233,7 +242,8 @@ async def lifespan(app: FastAPI):
     app.state.router = router
     # Entries are normally popped by their request; the age limit is a
     # backstop for streams whose response body never started.
-    app.state.tracker = TaskTracker(max_age=STREAM_MAX_SECONDS + TASK_TIMEOUT)
+    app.state.tracker = TaskTracker(max_age=STREAM_MAX_SECONDS + TASK_TIMEOUT,
+                                    max_result_bytes=MAX_RESULT_BYTES)
 
     from gemmanet.forum.database import init_forum_db, seed_forum_db
     init_forum_db()
@@ -253,6 +263,8 @@ app = FastAPI(title='GemmaNet Coordinator', version=__version__, lifespan=lifesp
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Added before CORS so CORS wraps it and a 413 still carries CORS headers.
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],
@@ -414,7 +426,7 @@ async def _run_task(task_id: str, requester: str, task_type: str, content: str,
     except TimeoutError:
         await _record_outcome(task_id, requester, [(task.node_id, False, TASK_TIMEOUT_MS)])
         raise
-    except NodeDisconnected:
+    except (NodeDisconnected, ResultTooLarge):
         await _record_outcome(task_id, requester, [(task.node_id, False, task.elapsed_ms)])
         raise
     finally:
@@ -469,7 +481,7 @@ async def _run_split_task(task_id: str, requester: str, task_type: str,
         elif isinstance(outcome, asyncio.TimeoutError):
             records.append((task.node_id, False, TASK_TIMEOUT_MS))
             error = error or outcome
-        elif isinstance(outcome, NodeDisconnected):
+        elif isinstance(outcome, NodeDisconnected | ResultTooLarge):
             records.append((task.node_id, False, task.elapsed_ms))
             error = error or outcome
         else:
@@ -518,8 +530,11 @@ async def _stream_task(task: PendingTask, requester: str):
             if kind == 'error':
                 await _record_outcome(task.task_id, requester,
                                       [(task.node_id, False, task.elapsed_ms)])
-                yield 'error', ('node_disconnected',
-                                'Node disconnected before returning a result')
+                if isinstance(value, ResultTooLarge):
+                    yield 'error', ('result_too_large', RESULT_TOO_LARGE_MESSAGE)
+                else:
+                    yield 'error', ('node_disconnected',
+                                    'Node disconnected before returning a result')
                 return
 
             result = _task_result(task, value)
@@ -642,9 +657,25 @@ async def node_websocket(websocket: WebSocket):
         await websocket.send_text(make_ws_msg(MsgType.ERROR, {'code': code, 'message': message}))
         await websocket.close(code=close_code)
 
+    async def receive() -> str | None:
+        raw = await websocket.receive_text()
+        if len(raw) > WS_MAX_MESSAGE_BYTES or len(raw.encode()) > WS_MAX_MESSAGE_BYTES:
+            await websocket.close(code=CLOSE_MESSAGE_TOO_BIG)
+            return None
+        return raw
+
+    client_ip = websocket.client.host if websocket.client else 'unknown'
+    if not ws_connect_limiter.allow(client_ip):
+        # Closing before accept() answers the handshake with HTTP 403.
+        logger.warning(f'Too many node connections from {client_ip}')
+        await websocket.close(code=CLOSE_POLICY_VIOLATION)
+        return
+
     try:
         await websocket.accept()
-        raw = await asyncio.wait_for(websocket.receive_text(), REGISTER_TIMEOUT)
+        raw = await asyncio.wait_for(receive(), REGISTER_TIMEOUT)
+        if raw is None:
+            return
         try:
             msg = parse_ws_msg(raw)
             if msg.msg_type != MsgType.NODE_REGISTER:
@@ -660,6 +691,11 @@ async def node_websocket(websocket: WebSocket):
             return
 
         node_id = derive_node_id(account_id, reg.name)
+        too_many = (f'An account may have at most {MAX_NODES_PER_ACCOUNT} nodes online; '
+                    'stop one or use another API key')
+        if ws_manager.exceeds_node_limit(account_id, node_id, MAX_NODES_PER_ACCOUNT):
+            await reject('too_many_nodes', too_many, CLOSE_POLICY_VIOLATION)
+            return
         info = {
             'node_id': node_id,
             'name': reg.name,
@@ -670,7 +706,14 @@ async def node_websocket(websocket: WebSocket):
         # Acknowledge before the node becomes routable, so the first message
         # it sees is always node_registered, never a task.
         await websocket.send_text(make_ws_msg(MsgType.NODE_REGISTERED, {'node_id': node_id}))
-        previous = ws_manager.attach(node_id, websocket, info)
+        previous = ws_manager.attach(node_id, websocket, info, account_id)
+        # Re-check right after attaching (no await in between): another
+        # registration of the same account may have attached meanwhile.
+        if ws_manager.exceeds_node_limit(account_id, node_id, MAX_NODES_PER_ACCOUNT):
+            ws_manager.detach(node_id, websocket)
+            node_id = None
+            await reject('too_many_nodes', too_many, CLOSE_POLICY_VIOLATION)
+            return
         await registry.register(node_id, info)
         if previous is not None:
             tracker.fail_connection(previous)
@@ -690,7 +733,9 @@ async def node_websocket(websocket: WebSocket):
         await send_benchmark()
 
         while True:
-            raw = await websocket.receive_text()
+            raw = await receive()
+            if raw is None:
+                return
             try:
                 msg = parse_ws_msg(raw)
             except ValidationError:
@@ -767,6 +812,8 @@ async def handle_request(request: Request, body: RequestBody,
     except NodeDisconnected:
         raise HTTPException(status_code=502,
                             detail='Node disconnected before returning a result') from None
+    except ResultTooLarge:
+        raise HTTPException(status_code=502, detail=RESULT_TOO_LARGE_MESSAGE) from None
 
     if not body.stream:
         return result.model_dump(mode='json')
@@ -784,7 +831,7 @@ async def handle_request(request: Request, body: RequestBody,
 
 
 class ChatMessage(BaseModel):
-    role: str
+    role: str = Field(max_length=32)
     content: str | list | None = None
 
     def text(self) -> str:
@@ -798,7 +845,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str = 'gemmanet/auto'
+    model: str = Field(default='gemmanet/auto', max_length=128)
     messages: list[ChatMessage] = Field(min_length=1, max_length=500)
     max_tokens: int | None = None
     temperature: float | None = None
@@ -893,6 +940,8 @@ async def openai_chat_completions(request: Request, body: ChatCompletionRequest,
     except NodeDisconnected:
         return _openai_error('Node disconnected before returning a result',
                              'server_error', 'node_disconnected', 502)
+    except ResultTooLarge:
+        return _openai_error(RESULT_TOO_LARGE_MESSAGE, 'server_error', 'result_too_large', 502)
 
     if result.status != TaskStatus.COMPLETED:
         return _openai_error(result.result or 'Task failed', 'server_error', 'node_error', 502)

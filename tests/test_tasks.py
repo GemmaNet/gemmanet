@@ -3,7 +3,13 @@ import asyncio
 
 import pytest
 
-from gemmanet.coordinator.tasks import NodeDisconnected, TaskTracker, next_event, wait_result
+from gemmanet.coordinator.tasks import (
+    NodeDisconnected,
+    ResultTooLarge,
+    TaskTracker,
+    next_event,
+    wait_result,
+)
 
 
 def test_result_from_other_connection_is_ignored():
@@ -80,3 +86,40 @@ def test_abandoned_tasks_are_evicted_after_max_age():
     assert size == 1
     assert old is None
     assert new is not None
+
+
+def test_streamed_output_over_the_limit_fails_the_task():
+    async def main():
+        loop = asyncio.get_running_loop()
+        tracker = TaskTracker(max_result_bytes=10)
+        conn = object()
+        task = tracker.create('t1', 'node-a', conn)
+        tracker.add_chunk('t1', conn, 'héllo')     # 6 bytes
+        tracker.add_chunk('t1', conn, 'abcd')      # 10: at the limit
+        tracker.add_chunk('t1', conn, 'x')         # 11: over
+        tracker.add_chunk('t1', conn, 'ignored')   # the task is already finished
+        tracker.resolve('t1', conn, {'status': 'completed', 'result': 'late'})
+        events = [await next_event(task, loop.time() + 1) for _ in range(3)]
+        assert task.events.empty()
+        return events
+
+    events = asyncio.run(main())
+    assert events[:2] == [('chunk', 'héllo'), ('chunk', 'abcd')]
+    kind, error = events[2]
+    assert kind == 'error' and isinstance(error, ResultTooLarge)
+
+
+def test_final_result_over_the_limit_fails_the_task():
+    async def main():
+        loop = asyncio.get_running_loop()
+        tracker = TaskTracker(max_result_bytes=10)
+        conn = object()
+        ok = tracker.create('ok', 'node-a', conn)
+        tracker.resolve('ok', conn, {'status': 'completed', 'result': 'x' * 10})
+        assert (await wait_result(ok, loop.time() + 1))['result'] == 'x' * 10
+        big = tracker.create('big', 'node-a', conn)
+        tracker.resolve('big', conn, {'status': 'completed', 'result': '字' * 4})  # 12 bytes
+        with pytest.raises(ResultTooLarge):
+            await wait_result(big, loop.time() + 1)
+
+    asyncio.run(main())
