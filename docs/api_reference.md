@@ -5,6 +5,28 @@ Base URL: `http://localhost:8800`
 Authenticated endpoints take the API key as `Authorization: Bearer <api_key>`.
 Get a key from `POST /api/v1/register`.
 
+The machine-readable schema of this API is public on the coordinator host:
+`/openapi.json`, with interactive views at `/docs` (Swagger UI) and `/redoc`.
+It describes only endpoints that are public anyway.
+
+## Limits
+
+| Limit | Value | When exceeded |
+|-------|-------|---------------|
+| Request body | 2 MB | 413 |
+| `content` | 200,000 characters | 422 |
+| `params` | 32 keys (identifiers, ≤ 64 characters), strings ≤ 8,192 characters, nesting ≤ 4 levels, ≤ 32 KiB as JSON | 422 |
+| Result of one task (streamed chunks in total, and the final result) | 1 MiB of UTF-8 text | 502 `Result too large` / stream error `result_too_large` |
+| Node connections per client IP | 30 per minute | handshake refused with HTTP 403 (the SDK retries with backoff) |
+| Nodes online per account | 5 | `error` `too_many_nodes`, close code 1008 |
+| One WebSocket message | 4 MiB | close code 1009 |
+| Registration after connecting | 10 s | connection closed |
+
+Operators can change these with `GEMMANET_MAX_BODY_BYTES`,
+`GEMMANET_MAX_RESULT_BYTES`, `GEMMANET_WS_CONNECTS_PER_MINUTE`,
+`GEMMANET_MAX_NODES_PER_ACCOUNT` and `GEMMANET_WS_MAX_MESSAGE_BYTES`
+(keep uvicorn's `--ws-max-size` in step with the last one).
+
 ## POST /api/v1/register
 
 Create an account and API key.
@@ -102,7 +124,7 @@ Submit a task. The coordinator routes it to the best available node.
 |-------|------|-------------|
 | `task_type` | string | Capability to use (e.g., `echo`, `translate`) |
 | `content` | string | Content to process (up to 200,000 characters) |
-| `params` | object | Keyword arguments for the node's handler; keys must be identifiers other than `content` |
+| `params` | object | Keyword arguments for the node's handler; keys must be identifiers other than `content` (see [Limits](#limits)) |
 | `stream` | bool | Stream the result as Server-Sent Events (see below) |
 
 **Response (200):**
@@ -133,7 +155,8 @@ data: {"delta": "upon a time"}
 data: {"done": true, "result": { ...TaskResult... }}
 ```
 
-or, if the task fails, `data: {"error": {"code": "task_failed", "message": "..."}, "task_id": "..."}`.
+or, if the task fails, `data: {"error": {"code": "task_failed", "message": "..."}, "task_id": "..."}`
+(other codes: `timeout`, `node_disconnected`, `result_too_large`).
 
 A stream may run longer than the task timeout as long as the node keeps
 sending chunks: the timeout then limits the silence between chunks, up to
@@ -145,8 +168,9 @@ sending chunks: the timeout then limits the silence between chunks, up to
 |------|--------|
 | 401 | Invalid or missing API key |
 | 404 | No node available for this task type |
+| 413 | Request body over 2 MB |
 | 422 | Invalid request body or params |
-| 502 | Node disconnected before returning a result |
+| 502 | Node disconnected before returning a result, or its result exceeded 1 MiB |
 | 504 | Task timed out (60s, `GEMMANET_TASK_TIMEOUT`) |
 
 ---
@@ -231,7 +255,8 @@ send results. The SDK's `Node` class implements this protocol.
 1. Node connects to `ws://localhost:8800/ws/node`
 2. Node sends `node_register` with its API key, name, capabilities, languages and model info
 3. Coordinator answers `node_registered` with the node's id, or `error`
-   (`auth_failed`, close code 4001; `invalid_registration`, close code 1008)
+   (`auth_failed`, close code 4001; `invalid_registration` or `too_many_nodes`,
+   close code 1008)
 4. Coordinator sends a `benchmark`; the node replies with `benchmark_result`
 5. Node receives `task_assign` messages and answers each with `task_result`
    (preceded by `task_chunk` messages when the task asked for streaming)

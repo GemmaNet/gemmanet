@@ -2,9 +2,29 @@
 # Configure through .env (copy .env.example). See deploy/DEPLOY.md.
 name: gemmanet
 
+# Every service: no capabilities, no privilege gain, read-only root file
+# system, a non-root user, size-capped logs (20 MB x 3; the privacy policy
+# relies on it). CI checks this on the running stack. Keys that a host-local
+# docker-compose.override.yml may set (cgroup_parent, mem_limit, pids_limit)
+# are deliberately left out.
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  read_only: true
+  logging:
+    driver: json-file
+    options:
+      max-size: 20m
+      max-file: "3"
+
 services:
   postgres:
+    <<: *hardening
     image: postgres:16
+    # Started as the image's own user, the entrypoint needs no capabilities
+    # (it only chowns and switches user when started as root).
+    user: postgres
+    tmpfs: [/var/run/postgresql, /tmp]
     restart: unless-stopped
     environment:
       POSTGRES_USER: gemmanet
@@ -19,7 +39,10 @@ services:
       retries: 30
 
   redis:
+    <<: *hardening
     image: redis:7
+    user: redis
+    tmpfs: [/tmp]
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -31,10 +54,12 @@ services:
       retries: 30
 
   coordinator:
+    <<: *hardening
     build:
       context: .
       target: app
     image: gemmanet-app
+    tmpfs: [/tmp]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -60,10 +85,17 @@ services:
       start_period: 15s
 
   caddy:
+    <<: *hardening
     build:
       context: .
       target: web
     image: gemmanet-web
+    # Runs as uid/gid 10002 (see Dockerfile): deploy/certs must be readable by
+    # it, e.g. sudo chgrp 10002 deploy/certs/* && sudo chmod 640 deploy/certs/*
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    # Certificates come from files, so Caddy's storage needs no persistence.
+    tmpfs: ["/data:uid=10002,gid=10002,mode=0700", "/config:uid=10002,gid=10002,mode=0700"]
     restart: unless-stopped
     depends_on:
       coordinator:
@@ -77,12 +109,12 @@ services:
       TLS_MODE: ${TLS_MODE:-origin}
     volumes:
       - ./deploy/certs:/certs:ro
-      - caddy-data:/data
-      - caddy-config:/config
 
   # Seed nodes: docker compose --profile seeds up -d  (needs GEMMANET_API_KEY)
   seed-chat: &seed
+    <<: *hardening
     image: gemmanet-app
+    tmpfs: [/tmp]
     profiles: ["seeds"]
     restart: unless-stopped
     depends_on:
@@ -103,5 +135,3 @@ volumes:
   postgres-data:
   redis-data:
   coordinator-data:
-  caddy-data:
-  caddy-config:

@@ -37,6 +37,14 @@ def test_old_paths_redirect_to_the_api(site):
     assert '/v1/* https://api.example.test/v1/:splat 308' in rules
 
 
+def test_security_headers_are_in_the_build(site):
+    rules = (site / '_headers').read_text()
+    assert '/*' in rules.splitlines()
+    for header in ('Strict-Transport-Security: max-age=86400', 'X-Content-Type-Options: nosniff',
+                   'X-Frame-Options: DENY', 'Referrer-Policy: strict-origin-when-cross-origin'):
+        assert header in rules
+
+
 def test_build_fails_if_the_website_drops_a_rewritten_link(monkeypatch, tmp_path):
     monkeypatch.setattr(build_pages, 'website_rewrites',
                         lambda api: [('href="/not-on-the-page/"', 'x')])

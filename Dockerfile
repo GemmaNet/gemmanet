@@ -26,8 +26,9 @@ EXPOSE 8800
 # One process only (no --workers): node connections live in memory.
 # Port 8800 is reachable only from the compose network (Caddy), so the
 # forwarded client IP set by Caddy can be trusted.
+# --ws-max-size matches GEMMANET_WS_MAX_MESSAGE_BYTES (4 MiB).
 CMD ["uvicorn", "gemmanet.coordinator.server:app", "--host", "0.0.0.0", "--port", "8800", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--proxy-headers", "--forwarded-allow-ips", "*", "--ws-max-size", "4194304"]
 
 FROM python:3.11-slim AS docs
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -41,6 +42,14 @@ COPY docs ./docs
 RUN mkdocs build --strict -d /site
 
 FROM caddy:2 AS web
+# Run as a non-root user with no capabilities. The official binary carries a
+# file capability (cap_net_bind_service), which makes the kernel refuse to run
+# it once all capabilities are dropped; a copy has none. Binding 80/443 still
+# works: Docker sets net.ipv4.ip_unprivileged_port_start=0 in the container
+# (docker-compose.yml states it too).
+RUN cp /usr/bin/caddy /tmp/caddy && mv /tmp/caddy /usr/bin/caddy \
+    && addgroup -S -g 10002 caddy && adduser -S -D -H -u 10002 -G caddy caddy
 COPY deploy/Caddyfile.docker /etc/caddy/Caddyfile
 COPY website /srv/website
 COPY --from=docs /site /srv/docs
+USER caddy

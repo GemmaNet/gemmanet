@@ -23,6 +23,9 @@ logger = logging.getLogger("gemmanet.node")
 # other process off again, so the node stops instead.
 CLOSE_REPLACED = 4000
 REGISTER_TIMEOUT = 30
+# Largest message accepted from the coordinator; matches its own limit
+# (GEMMANET_WS_MAX_MESSAGE_BYTES) so a large valid task still arrives.
+MAX_MESSAGE_BYTES = 4 * 1024 * 1024
 
 
 def _is_async_callable(fn) -> bool:
@@ -97,7 +100,8 @@ class Node:
         backoff = 1
         while self._running:
             try:
-                async with websockets.connect(self.coordinator_url) as ws:
+                async with websockets.connect(self.coordinator_url,
+                                              max_size=MAX_MESSAGE_BYTES) as ws:
                     await self._register(ws)
                     self._ws = ws
                     backoff = 1
@@ -113,7 +117,10 @@ class Node:
                         except asyncio.CancelledError:
                             pass
 
-            except (TimeoutError, websockets.ConnectionClosed, OSError) as e:
+            except (TimeoutError, websockets.ConnectionClosed, OSError,
+                    websockets.InvalidHandshake) as e:
+                # InvalidHandshake: the coordinator refused the connection
+                # (e.g. HTTP 403 when connecting too often); retry later.
                 self._ws = None
                 rcvd = getattr(e, 'rcvd', None)
                 if rcvd is not None and rcvd.code == CLOSE_REPLACED:

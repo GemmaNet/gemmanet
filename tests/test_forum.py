@@ -1,4 +1,5 @@
 """Forum: escaping, client IP handling, and safe redirects."""
+import re
 import sqlite3
 
 import pytest
@@ -68,9 +69,6 @@ def test_forwarded_for_header_cannot_bypass_rate_limit(client):
 
 def test_upvote_redirect_stays_on_forum(client):
     post(client, 'hello')
-    evil = client.post('/upvote/1', headers={'referer': 'https://evil.example/talk/x'},
-                       follow_redirects=False)
-    assert evil.headers['location'] == '/talk/'
     outside = client.post('/upvote/1', headers={'referer': 'http://testserver/dashboard/'},
                           follow_redirects=False)
     assert outside.headers['location'] == '/talk/'
@@ -85,3 +83,41 @@ def test_home_link_follows_site_url(client, monkeypatch):
     page = client.get('/').text
     assert page.count('href="https://gemmanet.net"') == 2  # header and footer
     assert 'href="/"' not in page
+
+
+@pytest.mark.parametrize('headers', [
+    {'Origin': 'https://evil.example'},
+    {'Origin': 'null'},                                     # origin withheld
+    {'Referer': 'https://evil.example/page'},               # no Origin: Referer decides
+    {'Origin': 'https://evil.example', 'Referer': 'http://testserver/talk/'},
+])
+def test_cross_origin_posts_are_refused(client, headers):
+    assert post(client, 'forged', **headers).status_code == 403
+    assert client.post('/reply/1', data={'content': 'forged'}, headers=headers).status_code == 403
+    assert client.post('/upvote/1', headers=headers).status_code == 403
+    assert 'forged' not in client.get('/').text
+
+
+def test_same_origin_posts_are_accepted(client):
+    assert post(client, 'from the forum page', Origin='http://testserver').status_code == 303
+    assert post(client, 'from a referer', Referer='http://testserver/talk/new').status_code == 303
+    assert post(client, 'from curl').status_code == 303       # no Origin/Referer at all
+
+
+def test_pages_forbid_inline_scripts(client):
+    post(client, 'hello')
+    for path in ('/', '/new', '/post/1'):
+        resp = client.get(path)
+        policy = resp.headers['content-security-policy']
+        assert "script-src 'self';" in policy and "frame-ancestors 'none'" in policy
+        # Anything inline would be blocked by that policy, so there must be none.
+        assert not re.search(r'<script(?![^>]*\ssrc=)[^>]*>', resp.text)
+        assert not re.search(r'\son[a-z]+\s*=', resp.text)
+    assert '<script src="/talk/forum.js"></script>' in client.get('/new').text
+
+
+def test_counter_script_is_served(client):
+    resp = client.get('/forum.js')
+    assert resp.headers['content-type'].startswith('text/javascript')
+    assert "data-counter" in resp.text or 'dataset.counter' in resp.text
+    assert 'data-counter="cc"' in client.get('/new').text

@@ -41,6 +41,21 @@
 {$SITE_ADDRESSES} {
 	import tls-{$TLS_MODE}
 
+	# The same four headers as website/_headers on Cloudflare Pages. The
+	# coordinator adds a Content-Security-Policy to /dashboard and /talk.
+	header {
+		Strict-Transport-Security "max-age=86400"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# Largest valid API request: 200,000 characters of content, even from a
+	# JSON encoder that escapes non-ASCII (the coordinator checks this too).
+	request_body {
+		max_size 2MB
+	}
+
 	# api.<domain>: everything goes to the coordinator
 	@api host {$API_HOST}
 	handle @api {
@@ -63,6 +78,8 @@
 	handle {
 		root * /srv/website
 		encode gzip
-		file_server
+		file_server {
+			hide _headers
+		}
 	}
 }
