@@ -121,6 +121,35 @@ jobs:
           echo "online nodes: $n"
           test "$n" -ge 3
 
+      - name: TLS_MODE=origin-mtls admits only the AOP client certificate
+        run: |
+          # Throwaway certificates: origin (server), the AOP CA and a client
+          # certificate it signed (stands in for Cloudflare), and a client
+          # certificate from another CA.
+          d=$(mktemp -d)
+          gen() { openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$1" -keyout $d/$1.key -out $d/$1.pem "${@:2}" 2>/dev/null; }
+          gen origin -addext subjectAltName=DNS:api.localhost
+          gen aop-ca
+          gen rogue-ca
+          gen aop-client -CA $d/aop-ca.pem -CAkey $d/aop-ca.key -addext extendedKeyUsage=clientAuth
+          gen rogue-client -CA $d/rogue-ca.pem -CAkey $d/rogue-ca.key -addext extendedKeyUsage=clientAuth
+          net=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q coordinator)")
+          docker run -d --name mtls-caddy --network "$net" -p 8443:443 \
+            -e SITE_ADDRESSES=api.localhost -e API_HOST=api.localhost -e TLS_MODE=origin-mtls \
+            -v "$d:/certs:ro" gemmanet-web
+          fetch() { curl -s -o /dev/null -w '%{http_code}' --resolve api.localhost:8443:127.0.0.1 \
+            --cacert $d/origin.pem "$@" https://api.localhost:8443/api/v1/status || true; }
+          for i in $(seq 1 30); do [ "$(fetch --cert $d/aop-client.pem --key $d/aop-client.key)" = 200 ] && break; sleep 1; done
+          valid=$(fetch --cert $d/aop-client.pem --key $d/aop-client.key)
+          none=$(fetch)
+          rogue=$(fetch --cert $d/rogue-client.pem --key $d/rogue-client.key)
+          # Straight to the IP without SNI, as a scanner would
+          nosni=$(curl -s -o /dev/null -w '%{http_code}' -k -H 'Host: api.localhost' https://127.0.0.1:8443/api/v1/status || true)
+          echo "AOP client cert: $valid | no cert: $none | other CA: $rogue | no SNI: $nosni"
+          docker logs mtls-caddy 2>&1 | tail -5
+          docker rm -f mtls-caddy
+          test "$valid" = 200 && test "$none" = 000 && test "$rogue" = 000 && test "$nosni" != 200
+
       - name: Logs
         if: failure()
         run: docker compose --profile seeds logs

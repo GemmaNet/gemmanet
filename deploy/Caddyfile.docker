@@ -1,5 +1,5 @@
 # Caddy config for the docker compose stack (see deploy/DEPLOY.md).
-# Env: SITE_ADDRESSES, API_HOST, TLS_MODE (origin | none).
+# Env: SITE_ADDRESSES, API_HOST, TLS_MODE (origin | origin-mtls | none).
 {
 	servers {
 		# Requests arrive through Cloudflare. Trust its edge ranges so the
@@ -13,6 +13,18 @@
 # Cloudflare Origin Certificate (Cloudflare SSL/TLS mode "Full (strict)")
 (tls-origin) {
 	tls /certs/origin.pem /certs/origin.key
+}
+
+# As tls-origin, plus Authenticated Origin Pulls: only clients presenting a
+# certificate signed by aop-ca.pem (Cloudflare, per-hostname AOP with your own
+# certificate) can connect. Every hostname in SITE_ADDRESSES needs AOP enabled.
+(tls-origin-mtls) {
+	tls /certs/origin.pem /certs/origin.key {
+		client_auth {
+			mode require_and_verify
+			trust_pool file /certs/aop-ca.pem
+		}
+	}
 }
 
 # Plain HTTP, for local testing with http:// site addresses
