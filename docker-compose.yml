@@ -72,6 +72,7 @@ services:
       ADMIN_KEY: ${ADMIN_KEY:?set ADMIN_KEY in .env}
       COORDINATOR_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
       GEMMANET_SITE_URL: ${SITE_URL:-/}
+      GEMMANET_OFFICIAL_ACCOUNTS: ${OFFICIAL_ACCOUNTS:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - coordinator-data:/data

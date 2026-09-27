@@ -1,8 +1,35 @@
+import hashlib
+import hmac
 import html
 import os
+import re
+import secrets
 import sqlite3
 
 DB_PATH = os.getenv('FORUM_DB', 'forum.db')
+# One vote per visitor and post is enforced for this long, then forgotten.
+VOTE_RETENTION_DAYS = 30
+
+_fallback_secret = secrets.token_bytes(32)
+
+
+def _voter_secret() -> bytes:
+    """Key for voter ids; kept out of the database so a copy of it can't be
+    turned back into IP addresses. FORUM_IP_SECRET, else derived from ADMIN_KEY."""
+    base = os.getenv('FORUM_IP_SECRET') or os.getenv('ADMIN_KEY')
+    if not base:
+        return _fallback_secret  # development: votes dedupe until restart
+    return hmac.new(base.encode(), b'gemmanet-forum-voter', hashlib.sha256).digest()
+
+
+def voter_id(ip: str) -> str:
+    """What the votes table stores instead of the visitor's IP address."""
+    return hmac.new(_voter_secret(), ip.encode(), hashlib.sha256).hexdigest()
+
+
+def purge_old_votes(conn):
+    conn.execute("DELETE FROM votes WHERE created_at < datetime('now', ?)",
+                 (f'-{VOTE_RETENTION_DAYS} days',))
 
 
 def get_db():
@@ -34,13 +61,15 @@ def init_forum_db():
         CREATE TABLE IF NOT EXISTS votes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             post_id INTEGER NOT NULL,
-            voter_ip TEXT NOT NULL,
+            voter_ip TEXT NOT NULL,  -- voter_id(ip), not the address itself
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(post_id, voter_ip)
         );
     ''')
     conn.commit()
     _migrate(conn)
+    purge_old_votes(conn)
+    conn.commit()
     conn.close()
 
 
@@ -57,6 +86,15 @@ def _migrate(conn):
                     f'UPDATE {table} SET username = ?, content = ? WHERE id = ?',
                     (html.unescape(row['username']), html.unescape(row['content']), row['id']))
         conn.execute('PRAGMA user_version = 1')
+        conn.commit()
+    if version < 2:
+        # Votes used to store the voter's IP address in clear.
+        is_hash = re.compile(r'^[0-9a-f]{64}$')
+        for row in conn.execute('SELECT id, voter_ip FROM votes').fetchall():
+            if not is_hash.match(row['voter_ip']):
+                conn.execute('UPDATE votes SET voter_ip = ? WHERE id = ?',
+                             (voter_id(row['voter_ip']), row['id']))
+        conn.execute('PRAGMA user_version = 2')
         conn.commit()
 
 

@@ -9,6 +9,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import (
@@ -91,6 +92,14 @@ SPLIT_CHUNKS = 3
 CLOSE_POLICY_VIOLATION = 1008
 CLOSE_MESSAGE_TOO_BIG = 1009
 CLOSE_AUTH_FAILED = 4001
+CLOSE_ACCOUNT_DELETED = 4003
+
+# Nodes of these accounts (comma-separated account ids, normally the account
+# of the seed nodes' key) are "official"; all others are "community". The
+# coordinator decides this from the authenticated key; a node cannot claim it.
+OFFICIAL_ACCOUNTS = frozenset(
+    a.strip() for a in os.getenv('GEMMANET_OFFICIAL_ACCOUNTS', '').split(',') if a.strip())
+Trust = Literal['any', 'official']
 
 # Node ids are derived from (account, node name) so a node keeps its
 # identity - and reputation - across restarts, and nobody else can claim it.
@@ -112,6 +121,16 @@ class NoNodeAvailable(Exception):
 
 def derive_node_id(account_id: str, name: str) -> str:
     return str(uuid.uuid5(NODE_ID_NAMESPACE, f'{account_id}/{name}'))
+
+
+def node_trust(account_id: str) -> str:
+    return 'official' if account_id in OFFICIAL_ACCOUNTS else 'community'
+
+
+def _account_nodes_key(account_id: str) -> str:
+    # Every node id an account ever registered, so deleting the account can
+    # find the reputation of nodes that are offline.
+    return f'gn:account:{account_id}:nodes'
 
 
 def _nonneg_int(value, default: int = 0) -> int:
@@ -198,6 +217,8 @@ class RequestBody(BaseModel):
     content: str = Field(max_length=MAX_CONTENT_CHARS)
     params: dict = Field(default_factory=dict)
     stream: bool = False
+    # "official": only nodes run by the operator of this network may see the task
+    trust: Trust = 'any'
     api_key: str | None = None  # deprecated: send the Authorization header
 
     @field_validator('params')
@@ -338,6 +359,13 @@ def _spawn(coro):
     task.add_done_callback(_background_tasks.discard)
 
 
+async def _close_quietly(websocket, code: int):
+    try:
+        await asyncio.wait_for(websocket.close(code=code), 10)
+    except Exception:
+        pass
+
+
 async def _close_replaced(node_id: str, websocket):
     try:
         await asyncio.wait_for(websocket.close(code=CLOSE_REPLACED), 10)
@@ -374,11 +402,12 @@ async def _assign(task_id: str, node_id: str, task_type: str, content: str,
 
 
 async def _dispatch(task_id: str, task_type: str, content: str, params: dict,
-                    stream: bool = False) -> PendingTask:
+                    stream: bool = False, trust: str = 'any') -> PendingTask:
     """Assign a task to the best node, falling back to the next best."""
     tried: set[str] = set()
     for _ in range(DISPATCH_ATTEMPTS):
-        node_id = await app.state.router.find_best_node(task_type, params, exclude=tried)
+        node_id = await app.state.router.find_best_node(task_type, params, exclude=tried,
+                                                        trust=trust)
         if node_id is None:
             break
         tried.add(node_id)
@@ -414,12 +443,12 @@ def _task_result(task: PendingTask, payload: dict) -> TaskResult:
 
 
 async def _run_task(task_id: str, requester: str, task_type: str, content: str,
-                    params: dict) -> TaskResult:
+                    params: dict, trust: str = 'any') -> TaskResult:
     """Run a task to completion (splitting it when appropriate)."""
     if app.state.router.should_split(content, task_type):
-        return await _run_split_task(task_id, requester, task_type, content, params)
+        return await _run_split_task(task_id, requester, task_type, content, params, trust)
 
-    task = await _dispatch(task_id, task_type, content, params)
+    task = await _dispatch(task_id, task_type, content, params, trust=trust)
     deadline = asyncio.get_running_loop().time() + TASK_TIMEOUT
     try:
         payload = await wait_result(task, deadline)
@@ -441,10 +470,10 @@ async def _run_task(task_id: str, requester: str, task_type: str, content: str,
 
 
 async def _run_split_task(task_id: str, requester: str, task_type: str,
-                          content: str, params: dict) -> TaskResult:
+                          content: str, params: dict, trust: str = 'any') -> TaskResult:
     router: RoutingEngine = app.state.router
     chunks = router.split_content(content, SPLIT_CHUNKS)
-    node_ids = await router.find_nodes_for_split(task_type, len(chunks))
+    node_ids = await router.find_nodes_for_split(task_type, len(chunks), trust=trust)
     if not node_ids:
         raise NoNodeAvailable(task_type)
 
@@ -461,7 +490,7 @@ async def _run_split_task(task_id: str, requester: str, task_type: str,
                 if task is not None:
                     break
             if task is None:
-                task = await _dispatch(sub_id, task_type, chunk, params)
+                task = await _dispatch(sub_id, task_type, chunk, params, trust=trust)
             tasks.append(task)
 
         deadline = loop.time() + TASK_TIMEOUT
@@ -702,6 +731,7 @@ async def node_websocket(websocket: WebSocket):
             'capabilities': reg.capabilities,
             'languages': reg.languages,
             'model_info': reg.model_info,
+            'trust': node_trust(account_id),
         }
         # Acknowledge before the node becomes routable, so the first message
         # it sees is always node_registered, never a task.
@@ -715,6 +745,7 @@ async def node_websocket(websocket: WebSocket):
             await reject('too_many_nodes', too_many, CLOSE_POLICY_VIOLATION)
             return
         await registry.register(node_id, info)
+        await registry.redis.sadd(_account_nodes_key(account_id), node_id)
         if previous is not None:
             tracker.fail_connection(previous)
             # A half-open socket can take a while to close; don't hold up
@@ -782,31 +813,42 @@ async def node_websocket(websocket: WebSocket):
             await _drop_connection(node_id, websocket)
 
 
+def _trust(body_value: str, header_value: str | None) -> str:
+    """The stricter of the body field and the X-GemmaNet-Trust header."""
+    if header_value is not None and header_value not in ('any', 'official'):
+        raise HTTPException(status_code=400,
+                            detail='X-GemmaNet-Trust must be "any" or "official"')
+    return 'official' if 'official' in (body_value, header_value) else 'any'
+
+
 @app.post('/api/v1/request')
 @limiter.limit('60/minute')
 async def handle_request(request: Request, body: RequestBody,
-                         authorization: str | None = Header(default=None)):
+                         authorization: str | None = Header(default=None),
+                         x_gemmanet_trust: str | None = Header(default=None)):
     requester = await _account_for_key(_bearer(authorization) or body.api_key)
     if not requester:
         raise HTTPException(status_code=401, detail='Invalid or missing API key')
+    trust = _trust(body.trust, x_gemmanet_trust)
 
     task_id = str(uuid.uuid4())
     logger.info(f'Task request: task_id={task_id}, task_type={body.task_type}, '
-                f'account_id={requester}, stream={body.stream}')
+                f'account_id={requester}, stream={body.stream}, trust={trust}')
     router: RoutingEngine = app.state.router
 
     try:
         if body.stream and not router.should_split(body.content, body.task_type):
             task = await _dispatch(task_id, body.task_type, body.content,
-                                   body.params, stream=True)
+                                   body.params, stream=True, trust=trust)
             return StreamingResponse(_native_sse(task, requester),
                                      media_type='text/event-stream')
 
         result = await _run_task(task_id, requester, body.task_type,
-                                 body.content, body.params)
+                                 body.content, body.params, trust)
     except NoNodeAvailable:
-        raise HTTPException(status_code=404,
-                            detail='No node available for this task type') from None
+        detail = ('No official node available for this task type' if trust == 'official'
+                  else 'No node available for this task type')
+        raise HTTPException(status_code=404, detail=detail) from None
     except TimeoutError:
         raise HTTPException(status_code=504, detail='Task timed out') from None
     except NodeDisconnected:
@@ -850,6 +892,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     stream: bool = False
+    trust: Trust = 'any'  # GemmaNet extension; OpenAI SDK: extra_body={'trust': 'official'}
 
 
 def _openai_error(message: str, error_type: str, code: str, status_code: int):
@@ -906,10 +949,15 @@ async def _openai_sse(task: PendingTask, requester: str, model: str):
 @app.post('/v1/chat/completions')
 @limiter.limit('60/minute')
 async def openai_chat_completions(request: Request, body: ChatCompletionRequest,
-                                  authorization: str | None = Header(default=None)):
+                                  authorization: str | None = Header(default=None),
+                                  x_gemmanet_trust: str | None = Header(default=None)):
     requester = await _account_for_key(_bearer(authorization))
     if not requester:
         return _openai_error('Invalid API key', 'authentication_error', 'invalid_api_key', 401)
+    if x_gemmanet_trust not in (None, 'any', 'official'):
+        return _openai_error('X-GemmaNet-Trust must be "any" or "official"',
+                             'invalid_request_error', 'invalid_trust', 400)
+    trust = _trust(body.trust, x_gemmanet_trust)
 
     messages = [{'role': m.role, 'content': m.text()} for m in body.messages]
     if sum(len(m['content']) for m in messages) > MAX_CONTENT_CHARS:
@@ -928,12 +976,14 @@ async def openai_chat_completions(request: Request, body: ChatCompletionRequest,
 
     try:
         if body.stream and not app.state.router.should_split(content, task_type):
-            task = await _dispatch(task_id, task_type, content, params, stream=True)
+            task = await _dispatch(task_id, task_type, content, params, stream=True,
+                                   trust=trust)
             return StreamingResponse(_openai_sse(task, requester, body.model),
                                      media_type='text/event-stream')
-        result = await _run_task(task_id, requester, task_type, content, params)
+        result = await _run_task(task_id, requester, task_type, content, params, trust)
     except NoNodeAvailable:
-        return _openai_error(f'No node available for task type: {task_type}',
+        tier = 'official node' if trust == 'official' else 'node'
+        return _openai_error(f'No {tier} available for task type: {task_type}',
                              'server_error', 'no_node_available', 503)
     except TimeoutError:
         return _openai_error('Request timed out', 'server_error', 'timeout', 504)
@@ -1017,6 +1067,41 @@ async def list_nodes(request: Request, capability: str | None = Query(default=No
     else:
         nodes = await registry.get_online_nodes()
     return nodes
+
+
+@app.get('/api/v1/account')
+@limiter.limit('60/minute')
+async def get_account(request: Request, account_id: str = Depends(require_account)):
+    ws_manager: WSConnectionManager = app.state.ws_manager
+    nodes = [{'node_id': n, 'name': (ws_manager.get_node_info(n) or {}).get('name')}
+             for n in ws_manager.account_nodes(account_id)]
+    return {'account_id': account_id, 'trust': node_trust(account_id), 'online_nodes': nodes}
+
+
+@app.delete('/api/v1/account')
+@limiter.limit('10/hour')
+async def delete_account(request: Request, account_id: str = Depends(require_account)):
+    """Delete the caller's account: its keys, feedback, nodes and their reputation."""
+    deleted = await asyncio.to_thread(APIKeyManager.delete_account, account_id)
+
+    # The keys are gone, so the nodes cannot register again once closed.
+    ws_manager: WSConnectionManager = app.state.ws_manager
+    for node_id in ws_manager.account_nodes(account_id):
+        websocket = ws_manager.get(node_id)
+        await _drop_connection(node_id, websocket)
+        _spawn(_close_quietly(websocket, CLOSE_ACCOUNT_DELETED))
+
+    redis = app.state.registry.redis
+    node_ids = await redis.smembers(_account_nodes_key(account_id))
+    for node_id in node_ids:
+        await app.state.reputation.forget_node(node_id)
+        await app.state.registry.unregister(node_id)
+        await redis.delete(f'gn:bench:{node_id}')
+    await redis.delete(_account_nodes_key(account_id))
+    logger.info(f'Account deleted: account_id={account_id}, keys={deleted["keys"]}, '
+                f'nodes={len(node_ids)}')
+    return {'status': 'deleted', 'account_id': account_id, 'keys': deleted['keys'],
+            'feedback': deleted['feedback'], 'nodes': len(node_ids)}
 
 
 @app.post('/api/v1/rate')

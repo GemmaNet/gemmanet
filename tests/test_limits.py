@@ -150,7 +150,11 @@ def test_racing_registrations_cannot_overshoot_the_node_cap(monkeypatch):
     from gemmanet.coordinator import server
     from gemmanet.coordinator.tasks import TaskTracker
 
+    class FakeRedis:
+        async def sadd(self, key, *members): pass
+
     class FakeRegistry:
+        redis = FakeRedis()
         async def register(self, node_id, info): pass
         async def unregister(self, node_id): pass
 

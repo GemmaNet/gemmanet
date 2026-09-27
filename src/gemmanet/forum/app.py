@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from gemmanet.forum.database import get_db
+from gemmanet.forum.database import get_db, purge_old_votes, voter_id
 
 forum_app = FastAPI()
 
@@ -375,15 +375,18 @@ async def upvote(post_id: int, request: Request):
     if not _check_rate(_rate_votes, ip, 30):
         raise HTTPException(status_code=429, detail='Rate limit: max 30 votes per hour')
 
+    voter = voter_id(ip)  # the address itself is never stored
     conn = get_db()
+    purge_old_votes(conn)
+    conn.commit()
     existing = conn.execute(
-        'SELECT id FROM votes WHERE post_id = ? AND voter_ip = ?', (post_id, ip)
+        'SELECT id FROM votes WHERE post_id = ? AND voter_ip = ?', (post_id, voter)
     ).fetchone()
 
     if not existing:
         try:
             conn.execute(
-                'INSERT INTO votes (post_id, voter_ip) VALUES (?, ?)', (post_id, ip)
+                'INSERT INTO votes (post_id, voter_ip) VALUES (?, ?)', (post_id, voter)
             )
             conn.execute('UPDATE posts SET upvotes = upvotes + 1 WHERE id = ?', (post_id,))
             conn.commit()

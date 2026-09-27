@@ -57,7 +57,7 @@ def test_migration_unescapes_legacy_rows(tmp_path, monkeypatch):
     conn = sqlite3.connect(path)
     assert conn.execute('SELECT username, content FROM posts').fetchone() == ('a&b', 'x & y <3')
     assert conn.execute('SELECT content FROM replies').fetchone() == ('fish & chips',)
-    assert conn.execute('PRAGMA user_version').fetchone()[0] == 1
+    assert conn.execute('PRAGMA user_version').fetchone()[0] == 2  # latest
     conn.close()
 
 
@@ -121,3 +121,70 @@ def test_counter_script_is_served(client):
     assert resp.headers['content-type'].startswith('text/javascript')
     assert "data-counter" in resp.text or 'dataset.counter' in resp.text
     assert 'data-counter="cc"' in client.get('/new').text
+
+
+def _votes(path=None):
+    conn = sqlite3.connect(path or forum_db.DB_PATH)
+    rows = conn.execute('SELECT post_id, voter_ip FROM votes').fetchall()
+    conn.close()
+    return rows
+
+
+def test_votes_store_no_ip_address_and_still_dedupe(client, monkeypatch):
+    monkeypatch.setenv('ADMIN_KEY', 'k1')
+    post(client, 'vote for me')
+    for _ in range(2):
+        client.post('/upvote/1')
+    [(_, stored)] = _votes()
+    assert re.fullmatch(r'[0-9a-f]{64}', stored)
+    assert 'testclient' not in stored          # TestClient's client address
+    assert stored == forum_db.voter_id('testclient')
+    assert client.get('/api/recent').json()[0]['upvotes'] == 1
+
+
+def test_voter_ids_depend_on_a_server_secret(monkeypatch):
+    monkeypatch.delenv('FORUM_IP_SECRET', raising=False)
+    monkeypatch.setenv('ADMIN_KEY', 'one')
+    first = forum_db.voter_id('203.0.113.9')
+    monkeypatch.setenv('ADMIN_KEY', 'two')
+    assert forum_db.voter_id('203.0.113.9') != first
+    monkeypatch.setenv('FORUM_IP_SECRET', 'dedicated')
+    dedicated = forum_db.voter_id('203.0.113.9')
+    monkeypatch.setenv('ADMIN_KEY', 'three')
+    assert forum_db.voter_id('203.0.113.9') == dedicated   # FORUM_IP_SECRET wins
+
+
+def test_migration_hashes_stored_ip_addresses(tmp_path, monkeypatch):
+    monkeypatch.setenv('ADMIN_KEY', 'k1')
+    path = tmp_path / 'v1.db'
+    monkeypatch.setattr(forum_db, 'DB_PATH', str(path))
+    forum_db.init_forum_db()
+    conn = sqlite3.connect(path)
+    conn.execute('PRAGMA user_version = 1')
+    conn.execute("INSERT INTO posts (content, upvotes) VALUES ('old', 1)")
+    conn.execute("INSERT INTO votes (post_id, voter_ip) VALUES (1, 'testclient')")
+    conn.commit()
+    conn.close()
+
+    forum_db.init_forum_db()
+    forum_db.init_forum_db()  # idempotent
+    assert _votes(path) == [(1, forum_db.voter_id('testclient'))]
+    # The migrated vote still counts: the same visitor cannot vote again.
+    TestClient(forum.forum_app).post('/upvote/1')
+    conn = sqlite3.connect(path)
+    assert conn.execute('SELECT upvotes FROM posts').fetchone() == (1,)
+    assert conn.execute('PRAGMA user_version').fetchone() == (2,)
+    conn.close()
+
+
+def test_votes_are_forgotten_after_30_days(client):
+    post(client, 'old post')
+    conn = sqlite3.connect(forum_db.DB_PATH)
+    conn.execute("INSERT INTO votes (post_id, voter_ip, created_at) "
+                 "VALUES (1, 'a', datetime('now', '-31 days'))")
+    conn.execute("INSERT INTO votes (post_id, voter_ip, created_at) "
+                 "VALUES (1, 'b', datetime('now', '-29 days'))")
+    conn.commit()
+    conn.close()
+    client.post('/upvote/1')
+    assert sorted(v for _, v in _votes()) == sorted(['b', forum_db.voter_id('testclient')])

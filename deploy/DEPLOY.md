@@ -132,6 +132,19 @@ docker compose --profile seeds up -d --wait
 curl -s https://new.gemmanet.net:8443/api/v1/nodes    # three seed nodes
 ```
 
+Make the seed nodes **official**, so requests with `"trust": "official"` can
+use them (see the privacy policy): put the key's account id in `.env` and
+restart the coordinator.
+
+```bash
+KEY=$(grep ^GEMMANET_API_KEY .env | cut -d= -f2)
+ACCOUNT=$(curl -s -H "Authorization: Bearer $KEY" https://new.gemmanet.net:8443/api/v1/account \
+          | python3 -c 'import sys, json; print(json.load(sys.stdin)["account_id"])')
+sed -i "s/^OFFICIAL_ACCOUNTS=.*/OFFICIAL_ACCOUNTS=$ACCOUNT/" .env
+docker compose --profile seeds up -d --wait
+curl -s https://new.gemmanet.net:8443/api/v1/nodes    # "trust": "official"
+```
+
 Also open `https://new.gemmanet.net:8443/dashboard/` and `/talk/` in a browser.
 
 ### A4. API live on api.gemmanet.net

@@ -96,6 +96,19 @@ class APIKeyManager:
                 raise
 
     @staticmethod
+    def delete_account(account_id: str) -> dict:
+        """Delete every key of the account and the feedback it sent."""
+        with SessionLocal() as session:
+            try:
+                keys = session.query(APIKey).filter_by(account_id=account_id).delete()
+                feedback = session.query(Feedback).filter_by(account_id=account_id).delete()
+                session.commit()
+                return {'keys': keys, 'feedback': feedback}
+            except Exception:
+                session.rollback()
+                raise
+
+    @staticmethod
     def revoke(key_prefix: str) -> bool:
         with SessionLocal() as session:
             try:

@@ -172,6 +172,12 @@ class ReputationSystem:
         entries.sort(key=lambda x: x['score'], reverse=True)
         return entries[:limit]
 
+    async def forget_node(self, node_id: str):
+        """Drop a node's reputation (its account was deleted)."""
+        await self.redis.delete(f'{self.prefix}:stats:{node_id}',
+                                f'{self.prefix}:ratings:{node_id}',
+                                f'{self.prefix}:suspended:{node_id}')
+
     async def is_suspended(self, node_id: str) -> bool:
         """Check if node is suspended due to low reputation."""
         val = await self.redis.get(f'{self.prefix}:suspended:{node_id}')

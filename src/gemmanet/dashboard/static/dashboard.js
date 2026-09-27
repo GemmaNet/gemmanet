@@ -42,7 +42,7 @@ async function loadNodes() {
         const nodes = await r.json();
         const tbody = document.getElementById('nodes-body');
         if (nodes.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No nodes online</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No nodes online</td></tr>';
             return;
         }
         // Fetch reputation and benchmark for each node
@@ -69,6 +69,7 @@ async function loadNodes() {
             } catch(e) {}
             return `<tr>
                 <td>${esc(n.name || n.node_id)}</td>
+                <td title="official: run by this network's operator; community: anyone else (they can see the requests they serve)">${esc(n.trust || 'community')}</td>
                 <td>${esc((n.capabilities || []).join(', '))}</td>
                 <td>${esc((n.languages || []).join(', '))}</td>
                 <td class="${repClass}">${esc(repScore)}</td>
