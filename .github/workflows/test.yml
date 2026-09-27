@@ -49,10 +49,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install dependencies (hash-locked, see scripts/lock.sh)
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps --no-build-isolation -e .
+          pip check
 
       - name: Lint
         run: ruff check src/ tests/ scripts/
@@ -75,7 +76,7 @@ jobs:
 
       - name: Cloudflare ranges in the Caddyfile are current
         run: |
-          pip install httpx
+          pip install --require-hashes -r requirements/app.txt
           python scripts/check_cloudflare_ips.py deploy/Caddyfile.docker
 
       - name: Start the stack
@@ -109,7 +110,7 @@ jobs:
 
       - name: Smoke check with the site built for Cloudflare Pages
         run: |
-          pip install -r docs/requirements.txt
+          pip install --require-hashes -r docs/requirements.txt
           GEMMANET_API_ORIGIN=http://api.localhost python scripts/build_pages.py
           python -m http.server 8099 --directory pages-dist >/dev/null 2>&1 &
           sleep 1
@@ -133,6 +134,24 @@ jobs:
 
       - name: Every container is hardened
         run: python3 scripts/check_hardening.py --expect 7
+
+      - name: No fixable HIGH/CRITICAL vulnerabilities or secrets in any image (Trivy)
+        run: |
+          # If this turns red without a code change, a base image or library
+          # needs updating: merge the Dependabot PR or bump the pin.
+          # Skipped: Debian's placeholder "snakeoil" TLS key in the upstream
+          # postgres layer; it is the same public key in every copy of that
+          # image and unused (ssl = off, the database is internal to the stack).
+          for image in gemmanet-app gemmanet-web gemmanet-postgres \
+              $(grep -oP 'image: \Kredis:\S+' docker-compose.yml); do
+            echo "::group::$image"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-cache:/root/.cache/trivy \
+              aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+              image --quiet --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+              --skip-files /etc/ssl/private/ssl-cert-snakeoil.key "$image"
+            echo "::endgroup::"
+          done
 
       - name: TLS_MODE=origin-mtls admits only the AOP client certificate
         run: |

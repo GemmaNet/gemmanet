@@ -1,6 +1,6 @@
 # Design: Security Audit Follow-ups (2026-09)
 
-**Status:** Accepted · **Source:** VM deploy assistant's audit hand-off, 2026-09-27 · **Delivery:** three PRs, each merged to `main` and then deployed by the VM assistant after the owner confirms the commit
+**Status:** Implemented (PRs #5, #6 and the supply-chain PR) · **Source:** VM deploy assistant's audit hand-off, 2026-09-27 · **Delivery:** three PRs, each merged to `main` and then deployed by the VM assistant after the owner confirms the commit
 
 Every item below names the check that proves it (the feedback loop), where
 that check runs, and how to back the change out. An item is done only when its
@@ -188,12 +188,38 @@ stats are gone. The policy text is checked against the code in review.
 
 ## 4. PR 3 — Supply chain (M7 and 17 HIGH findings in Caddy)
 
+Baseline, Trivy 0.74 (`--severity HIGH,CRITICAL --ignore-unfixed`): official
+`caddy:2` (v2.11.4) 17 findings (Go 1.26.3 standard library, `x/crypto`,
+`x/net`, `x/text`, `grpc`); `postgres:16` 22 (its `gosu`, built with Go 1.24);
+our app image 2 (`wheel` and a library vendored by `setuptools`, both from the
+base image); `redis:7` none.
+
 | Item | Design | Feedback loop |
 |------|--------|---------------|
-| Caddy's Go 1.26.3, `x/net`, `x/crypto`, `grpc` HIGH findings (fixed upstream, not re-released) | Dockerfile stage builds Caddy v2.11.4 with `xcaddy` (pinned) on the latest patched `golang` image, upgrading the affected modules (`--replace` where needed); the web image uses that binary (which also has no file capability, see §2.4) | Trivy in CI: 0 HIGH/CRITICAL findings that have a fix, on both images |
-| Unpinned Python dependencies | Hash-locked files generated with `pip-compile --generate-hashes` (`requirements/app.txt`, `requirements/dev.txt`, `docs/requirements.txt`); images and CI install with `--require-hashes`; the package itself installs with `--no-deps` | CI installs only from the locks; a lock that doesn't match fails the build |
-| Floating base image tags | Every `FROM` and compose `image:` pinned by digest | Dependabot (`pip`, `docker`, `docker-compose`, `github-actions`) opens update PRs, which run the full CI including Trivy |
-| `main` unprotected | Ruleset: PRs required, `test` + `deploy-smoke` + the Trivy job required, no force pushes, no deletion | Set by the owner (the repo tools available here cannot change rulesets); verified by attempting a direct push |
+| Caddy | Dockerfile stage builds Caddy v2.11.4 with `xcaddy` v0.4.7 on `golang:1.26.8`, replacing `x/crypto` v0.57.0, `x/net` v0.59.0, `x/text` v0.42.0, `grpc` v1.84.0 (each at or above what the build resolves by itself; lower pins would silently downgrade). The web image copies that binary over the official one | Trivy on the web image: 0 |
+| PostgreSQL | Our `db` image is `postgres:16` without `gosu`: compose starts it as the `postgres` user (PR 1), so the entrypoint never uses it | Trivy: 0. The same data volume starts |
+| App image | Installs only `requirements/app.txt`; the code runs from `/app/src` (`PYTHONPATH`), so `setuptools`/`wheel` are uninstalled | Trivy: 0 |
+| Python dependencies | Hash-locked files from `pip-compile --generate-hashes` (`scripts/lock.sh`): `requirements/app.txt` (image), `requirements/dev.txt` (CI, all extras plus the build backend), `docs/requirements.txt` (docs stage and the Pages build, whose command is unchanged; pip enforces hashes when a file has them). Everything installs with `--require-hashes` | CI installs only from the locks and runs `pip check`; a lock that does not match fails the build |
+| Base images | Every `FROM` and the compose `redis` image pinned by digest (tag kept for readability and for Dependabot) | Dependabot (`docker`, `docker-compose`, `pip` for `/` and `/docs`, `github-actions`), weekly. Minor Python/Go and major PostgreSQL/Redis/Caddy jumps are ignored. Every update PR runs the full CI including Trivy |
+| Trivy in CI | Step in `deploy-smoke`: all four images the stack runs (`gemmanet-app`, `gemmanet-web`, `gemmanet-postgres`, `redis`), vulnerabilities and secrets, fails on anything fixable at HIGH/CRITICAL. One skip: Debian's placeholder "snakeoil" TLS key in the upstream postgres layer (the same public key in every copy of that image; unused, `ssl = off`) | The upstream `caddy:2` and `postgres:16` fail the same gate, so it discriminates |
+| `main` unprotected | Ruleset: PRs required, `test` and `deploy-smoke` must pass, no force pushes, no deletion | Set by the owner (see below); verified by a direct push being refused |
+
+**Building on the VM** now compiles Caddy: it needs outbound access to
+`proxy.golang.org`, a few minutes, and about 3 GB of build cache, which
+`docker builder prune -f` reclaims after a successful deploy.
+
+**Branch protection, by the owner** (the tools available to the assistant
+cannot change repository rules): GitHub → the repository → **Settings → Rules
+→ Rulesets → New ruleset → New branch ruleset**. Name `main`, enforcement
+**Active**, target **Include default branch**, then enable:
+
+- **Restrict deletions**
+- **Require a pull request before merging** (required approvals: 0, since
+  the owner is the only maintainer and cannot approve their own pull requests)
+- **Require status checks to pass**, adding `test` and `deploy-smoke`
+- **Block force pushes**
+
+Leave the bypass list empty.
 
 ## 5. Decisions taken on the owner's behalf
 

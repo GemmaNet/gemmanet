@@ -1,0 +1,53 @@
+# Weekly update PRs for everything that is pinned. Each PR runs the full CI,
+# including Trivy, so an update that breaks the stack or adds a finding is
+# visible before it is merged.
+version: 2
+updates:
+  # Base images in the Dockerfile (pinned by digest)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Python 3.11 is the tested version; Go only needs patch releases here
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # A new PostgreSQL major version needs a data migration
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: caddy
+        update-types: ["version-update:semver-major"]
+
+  # Images in docker-compose.yml (redis, pinned by digest)
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: redis
+        update-types: ["version-update:semver-major"]
+
+  # Hash-locked Python dependencies (pip-compile files; regenerate by hand
+  # with scripts/lock.sh if an update needs it)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /docs
+    schedule:
+      interval: weekly
+    groups:
+      docs:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
