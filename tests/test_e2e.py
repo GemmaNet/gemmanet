@@ -16,13 +16,14 @@ import httpx
 import pytest
 
 from gemmanet import Client, Completion, Node
-from gemmanet.sdk.exceptions import AuthenticationError, GemmaNetError
+from gemmanet.sdk.exceptions import AuthenticationError, GemmaNetError, NoNodeAvailableError
 
 E2E_REDIS_URL = os.getenv('E2E_REDIS_URL', 'redis://localhost:6379/2')
 # Coordinators with lowered limits run next to the main one; each needs its
 # own Redis database (one coordinator per database).
 LIMITS_REDIS_URL = E2E_REDIS_URL.rsplit('/', 1)[0] + '/3'
 RATE_REDIS_URL = E2E_REDIS_URL.rsplit('/', 1)[0] + '/4'
+TRUST_REDIS_URL = E2E_REDIS_URL.rsplit('/', 1)[0] + '/5'
 
 pytestmark = pytest.mark.skipif(not os.getenv('DATABASE_URL'),
                                 reason='needs DATABASE_URL and Redis')
@@ -463,3 +464,149 @@ def test_result_over_the_limit_fails_cleanly(run_limited_node, limited_url, keys
         assert client.request('fits', 'again').result == 'x' * 1000
     rep = httpx.get(f'{limited_url}/api/v1/reputation/{node.node.node_id}').json()
     assert rep['total_tasks'] == 5 and rep['success_rate'] == 0.4
+
+
+# --- Trust tiers and account deletion (docs/design/security-hardening.md, H3/M1) ---
+
+@pytest.fixture(scope='module')
+def trust_url(base_url, keys, tmp_path_factory):
+    """A coordinator on which the 'owner' account's nodes are official."""
+    import redis
+    redis.Redis.from_url(TRUST_REDIS_URL).flushdb()
+    with _running_coordinator(tmp_path_factory.mktemp('trust'), REDIS_URL=TRUST_REDIS_URL,
+                              GEMMANET_OFFICIAL_ACCOUNTS=keys['owner']['account_id']) as url:
+        yield url
+
+
+@pytest.fixture
+def run_trust_node(trust_url, keys):
+    started = []
+
+    def start(name, handlers, key='owner', wait=True, **kwargs):
+        api_key = keys[key]['api_key'] if key in keys else key
+        node = RunningNode(trust_url, api_key, name, handlers, **kwargs)
+        started.append(node)
+        return node.wait_registered() if wait else node
+
+    yield start
+    for node in started:
+        node.stop()
+
+
+def _tiers(url):
+    return {n['name']: n['trust'] for n in httpx.get(f'{url}/api/v1/nodes').json()}
+
+
+def test_official_requests_only_reach_official_nodes(run_trust_node, trust_url, keys):
+    run_trust_node('ours', {'tiered': lambda c, **p: 'official',
+                            'translate': lambda c, **p: '[O]'})
+    run_trust_node('theirs', {'tiered': lambda c, **p: 'community',
+                              'translate': lambda c, **p: '[C]'}, key='other')
+    assert _tiers(trust_url) == {'ours': 'official', 'theirs': 'community'}
+    headers = {'Authorization': f'Bearer {keys["client"]["api_key"]}'}
+    with client_for(trust_url, keys) as client:
+        assert {client.request('tiered', 'x', trust='official').result
+                for _ in range(15)} == {'official'}
+        assert ''.join(client.request_stream('tiered', 'x', trust='official')) == 'official'
+        # Split tasks: every chunk must stay on official nodes too.
+        long_text = '\n\n'.join(f'Paragraph {i} ' + 'word ' * 60 for i in range(6))
+        merged = client.request('translate', long_text, trust='official').result
+        assert '[C]' not in merged and '[O]' in merged
+    for _ in range(5):
+        via_header = httpx.post(f'{trust_url}/api/v1/request',
+                                headers={**headers, 'X-GemmaNet-Trust': 'official'},
+                                json={'task_type': 'tiered', 'content': 'x'})
+        assert via_header.json()['result'] == 'official'
+        openai = httpx.post(f'{trust_url}/v1/chat/completions', headers=headers,
+                            json={'model': 'gemmanet/tiered', 'trust': 'official',
+                                  'messages': [{'role': 'user', 'content': 'x'}]})
+        assert openai.json()['choices'][0]['message']['content'] == 'official'
+    bad = httpx.post(f'{trust_url}/api/v1/request', headers={**headers, 'X-GemmaNet-Trust': 'x'},
+                     json={'task_type': 'tiered', 'content': 'x'})
+    assert bad.status_code == 400
+
+
+def test_official_only_never_falls_back_to_community(run_trust_node, trust_url, keys):
+    # Only a community node is online, so every path that leaked the trust
+    # setting would succeed here instead of being refused.
+    run_trust_node('only-theirs', {'solo': lambda c, **p: 'community',
+                                   'translate': lambda c, **p: '[C]'}, key='other')
+    headers = {'Authorization': f'Bearer {keys["client"]["api_key"]}'}
+    long_text = '\n\n'.join(f'Paragraph {i} ' + 'word ' * 60 for i in range(6))
+    with client_for(trust_url, keys) as client:
+        assert client.request('solo', 'x').result == 'community'      # default: any node
+        assert '[C]' in client.request('translate', long_text).result
+        with pytest.raises(NoNodeAvailableError, match='official'):
+            client.request('solo', 'x', trust='official')
+        with pytest.raises(NoNodeAvailableError):
+            list(client.request_stream('solo', 'x', trust='official'))
+        with pytest.raises(NoNodeAvailableError):                     # split task
+            client.request('translate', long_text, trust='official')
+    via_header = httpx.post(f'{trust_url}/api/v1/request',
+                            headers={**headers, 'X-GemmaNet-Trust': 'official'},
+                            json={'task_type': 'solo', 'content': 'x'})
+    assert via_header.status_code == 404
+    for stream in (False, True):
+        openai = httpx.post(f'{trust_url}/v1/chat/completions', headers=headers,
+                            json={'model': 'gemmanet/solo', 'trust': 'official', 'stream': stream,
+                                  'messages': [{'role': 'user', 'content': 'x'}]})
+        assert openai.status_code == 503, stream
+    openai = httpx.post(f'{trust_url}/v1/chat/completions',
+                        headers={**headers, 'X-GemmaNet-Trust': 'official'},
+                        json={'model': 'gemmanet/solo',
+                              'messages': [{'role': 'user', 'content': 'x'}]})
+    assert openai.status_code == 503
+
+
+def test_a_node_cannot_make_itself_official(trust_url, keys):
+    from websockets.sync.client import connect
+
+    from gemmanet.sdk.models import MsgType, make_ws_msg
+
+    with connect(trust_url.replace('http://', 'ws://') + '/ws/node') as ws:
+        ws.send(make_ws_msg(MsgType.NODE_REGISTER, {
+            'api_key': keys['other']['api_key'], 'name': 'pretender', 'capabilities': ['pose'],
+            'model_info': {'trust': 'official'}}))
+        assert json.loads(ws.recv())['msg_type'] == 'node_registered'
+        ws.send(make_ws_msg(MsgType.HEARTBEAT, {'trust': 'official', 'cpu_percent': 1}))
+        time.sleep(0.3)
+        assert _tiers(trust_url)['pretender'] == 'community'
+        with client_for(trust_url, keys) as client:
+            with pytest.raises(NoNodeAvailableError):
+                client.request('pose', 'x', trust='official')
+
+
+def test_account_deletion_removes_keys_nodes_and_data(run_trust_node, trust_url, keys):
+    import redis
+    new = httpx.post(f'{trust_url}/api/v1/register', json={}).json()
+    key, account_id = new['api_key'], new['account_id']
+    doomed = run_trust_node('doomed', {'echo': lambda c, **p: c}, key=key)
+    node_id = doomed.node.node_id
+    with Client(api_key=key, coordinator_url=trust_url) as client:
+        client.request('echo', 'hello')
+        sent = httpx.post(f'{trust_url}/api/v1/feedback',
+                          headers={'Authorization': f'Bearer {key}'},
+                          json={'type': 'other', 'message': f'bye {account_id}'})
+        assert sent.status_code == 200
+        account = client.account()
+        assert account['account_id'] == account_id and account['trust'] == 'community'
+        assert account['online_nodes'] == [{'node_id': node_id, 'name': 'doomed'}]
+        assert httpx.get(f'{trust_url}/api/v1/reputation/{node_id}').json()['total_tasks'] == 1
+
+        assert client.delete_account() == {'status': 'deleted', 'account_id': account_id,
+                                           'keys': 1, 'feedback': 1, 'nodes': 1}
+        with pytest.raises(AuthenticationError):
+            client.account()
+
+    doomed.thread.join(15)   # disconnected, and its key no longer registers
+    assert isinstance(doomed.error, AuthenticationError)
+    assert 'doomed' not in _tiers(trust_url)
+    assert httpx.get(f'{trust_url}/api/v1/reputation/{node_id}').json()['total_tasks'] == 0
+    feedback = httpx.get(f'{trust_url}/api/v1/feedback',
+                         headers={'Authorization': 'Bearer e2e-admin'}).json()
+    assert not any(account_id in f['message'] for f in feedback)
+    r = redis.Redis.from_url(TRUST_REDIS_URL)
+    assert not r.exists(f'gn:account:{account_id}:nodes', f'gn:bench:{node_id}')
+    # Other accounts are untouched.
+    with client_for(trust_url, keys, 'owner') as owner:
+        assert owner.account()['account_id'] == keys['owner']['account_id']

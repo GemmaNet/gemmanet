@@ -41,6 +41,8 @@ class NodeInfo(BaseModel):
     languages: list[str] = []
     online: bool = True
     load: float = 0.0
+    # "official": run by the operator of the network; "community": anyone else
+    trust: str = 'community'
 
 
 class MsgType(str, Enum):

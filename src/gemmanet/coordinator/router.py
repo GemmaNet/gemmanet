@@ -30,12 +30,18 @@ class RoutingEngine:
                                  if splittable_tasks is not None
                                  else _splittable_from_env())
 
+    async def _candidates(self, task_type: str, trust: str) -> list[dict]:
+        """Online nodes offering task_type; only official ones for trust='official'."""
+        nodes = await self.registry.get_nodes_by_capability(task_type)
+        return [n for n in nodes
+                if self.ws_manager and self.ws_manager.is_online(n['node_id'])
+                and (trust != 'official' or n.get('trust') == 'official')]
+
     async def find_best_node(self, task_type: str, params: dict | None = None,
-                             exclude: set[str] | None = None) -> str | None:
-        candidates = await self.registry.get_nodes_by_capability(task_type)
-        candidates = [n for n in candidates
-                      if self.ws_manager and self.ws_manager.is_online(n['node_id'])
-                      and n['node_id'] not in (exclude or ())]
+                             exclude: set[str] | None = None,
+                             trust: str = 'any') -> str | None:
+        candidates = [n for n in await self._candidates(task_type, trust)
+                      if n['node_id'] not in (exclude or ())]
         if not candidates:
             return None
 
@@ -90,11 +96,9 @@ class RoutingEngine:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[0][0]
 
-    async def find_nodes_for_split(self, task_type: str,
-                                   num_needed: int) -> list[str]:
-        candidates = await self.registry.get_nodes_by_capability(task_type)
-        candidates = [n for n in candidates
-                      if self.ws_manager and self.ws_manager.is_online(n['node_id'])]
+    async def find_nodes_for_split(self, task_type: str, num_needed: int,
+                                   trust: str = 'any') -> list[str]:
+        candidates = await self._candidates(task_type, trust)
         if not candidates:
             return []
 

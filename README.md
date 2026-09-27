@@ -90,6 +90,11 @@ result = client.request("echo", "Hello, GemmaNet!")
 print(result.result)  # Echo: Hello, GemmaNet!
 ```
 
+The node that serves a request sees its content. Nodes run by the network's
+operator are *official*; everyone else's are *community* nodes. To keep a
+request on official nodes, pass `trust="official"` (see the
+[Privacy Policy](docs/privacy.md)).
+
 ### Use the OpenAI SDK
 
 ```python

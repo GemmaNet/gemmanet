@@ -57,20 +57,24 @@ class Client:
 
     @staticmethod
     def _task_body(task: str, content: str, params: dict | None,
-                   stream: bool = False) -> dict:
-        return {
+                   stream: bool = False, trust: str = 'any') -> dict:
+        body = {
             'task_type': task,
             'content': content,
             'params': params or {},
             'stream': stream,
         }
+        if trust != 'any':
+            body['trust'] = trust
+        return body
 
     def request(self, task: str, content: str,
                 params: dict | None = None,
-                timeout: float = 90.0) -> TaskResult:
+                timeout: float = 90.0, trust: str = 'any') -> TaskResult:
+        """Run a task. trust='official' keeps it on nodes run by the network's operator."""
         try:
             resp = self._client.post('/api/v1/request',
-                                     json=self._task_body(task, content, params),
+                                     json=self._task_body(task, content, params, trust=trust),
                                      timeout=timeout)
         except httpx.TimeoutException:
             raise TaskTimeoutError('Request timed out') from None
@@ -79,7 +83,7 @@ class Client:
 
     async def request_async(self, task: str, content: str,
                             params: dict | None = None,
-                            timeout: float = 90.0) -> TaskResult:
+                            timeout: float = 90.0, trust: str = 'any') -> TaskResult:
         async with httpx.AsyncClient(
             base_url=self.coordinator_url,
             headers={'Authorization': f'Bearer {self.api_key}'},
@@ -87,7 +91,8 @@ class Client:
         ) as client:
             try:
                 resp = await client.post(
-                    '/api/v1/request', json=self._task_body(task, content, params))
+                    '/api/v1/request',
+                    json=self._task_body(task, content, params, trust=trust))
             except httpx.TimeoutException:
                 raise TaskTimeoutError('Request timed out') from None
             _check_response(resp)
@@ -95,12 +100,12 @@ class Client:
 
     def request_stream(self, task: str, content: str,
                        params: dict | None = None,
-                       timeout: float = 90.0) -> Iterator[str]:
+                       timeout: float = 90.0, trust: str = 'any') -> Iterator[str]:
         """Send a request and yield the result text as the node produces it."""
         try:
             with self._client.stream(
                 'POST', '/api/v1/request',
-                json=self._task_body(task, content, params, stream=True),
+                json=self._task_body(task, content, params, stream=True, trust=trust),
                 timeout=timeout,
             ) as response:
                 if response.status_code >= 400:
@@ -137,6 +142,19 @@ class Client:
     def network_status(self) -> dict:
         resp = self._client.get('/api/v1/status')
         _check_response(resp)
+        return resp.json()
+
+    def account(self) -> dict:
+        """The account behind this API key: id, trust tier and online nodes."""
+        resp = self._client.get('/api/v1/account')
+        _check_response(resp, task_endpoint=False)
+        return resp.json()
+
+    def delete_account(self) -> dict:
+        """Permanently delete this account: all its keys, feedback, nodes and
+        their reputation. The key stops working immediately."""
+        resp = self._client.delete('/api/v1/account')
+        _check_response(resp, task_endpoint=False)
         return resp.json()
 
     def close(self):

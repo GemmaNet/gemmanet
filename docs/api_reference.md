@@ -95,11 +95,16 @@ List online nodes, optionally filtered by capability.
     "capabilities": ["translate"],
     "languages": ["en", "zh"],
     "model_info": {},
+    "trust": "community",
     "cpu_percent": 12.5,
     "active_tasks": 0
   }
 ]
 ```
+
+`trust` is `official` for nodes run by the operator of this network (accounts
+listed in `GEMMANET_OFFICIAL_ACCOUNTS`) and `community` for all others. The
+coordinator sets it from the node's API key; a node cannot choose it.
 
 ---
 
@@ -126,6 +131,11 @@ Submit a task. The coordinator routes it to the best available node.
 | `content` | string | Content to process (up to 200,000 characters) |
 | `params` | object | Keyword arguments for the node's handler; keys must be identifiers other than `content` (see [Limits](#limits)) |
 | `stream` | bool | Stream the result as Server-Sent Events (see below) |
+| `trust` | string | `any` (default) or `official`: only official nodes may serve the task, never falling back to a community node. Also accepted as the header `X-GemmaNet-Trust: official` |
+
+The node that serves a task sees its content. Community nodes are run by
+independent operators; use `"trust": "official"` for anything you would not
+share with them.
 
 **Response (200):**
 
@@ -166,12 +176,42 @@ sending chunks: the timeout then limits the silence between chunks, up to
 
 | Code | Detail |
 |------|--------|
+| 400 | Invalid `X-GemmaNet-Trust` header |
 | 401 | Invalid or missing API key |
-| 404 | No node available for this task type |
+| 404 | No node (or, with `trust: official`, no official node) available for this task type |
 | 413 | Request body over 2 MB |
 | 422 | Invalid request body or params |
 | 502 | Node disconnected before returning a result, or its result exceeded 1 MiB |
 | 504 | Task timed out (60s, `GEMMANET_TASK_TIMEOUT`) |
+
+---
+
+## GET /api/v1/account
+
+The account behind the API key.
+
+**Auth required:** Yes
+
+```json
+{
+  "account_id": "3f1c...",
+  "trust": "community",
+  "online_nodes": [{"node_id": "7c4f...", "name": "zh-specialist"}]
+}
+```
+
+## DELETE /api/v1/account
+
+Permanently delete the account behind the API key: all its API keys and the
+email address, the feedback sent with them, and the reputation and benchmark
+data of its nodes. Its connected nodes are disconnected (close code 4003) and
+cannot register again. Limited to 10 calls per hour.
+
+**Auth required:** Yes
+
+```json
+{"status": "deleted", "account_id": "3f1c...", "keys": 1, "feedback": 0, "nodes": 2}
+```
 
 ---
 
@@ -333,6 +373,10 @@ handlers such as `OllamaHandler` use it); `content` holds the last user
 message, prefixed by the last system message. `max_tokens` and `temperature`
 are passed as params. With `"stream": true` the response streams
 `chat.completion.chunk` events as the node generates text.
+
+GemmaNet extension: `"trust": "official"` (with the OpenAI SDK,
+`extra_body={"trust": "official"}`, or the `X-GemmaNet-Trust: official`
+header) keeps the request on official nodes, as for `/api/v1/request`.
 
 **Response (200):**
 

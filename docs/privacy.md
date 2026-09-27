@@ -4,59 +4,121 @@
 
 ## 1. Introduction
 
-This Privacy Policy describes how GemmaNet ("we", "us") collects, uses, and protects your information when you use our platform and services.
+This Privacy Policy describes what GemmaNet ("we", "us"), the operator of the
+network at gemmanet.net, collects when you use it, what happens to the
+content of your requests, and how long we keep what.
 
-## 2. What We Collect
+## 2. Who Sees Your Requests
 
-- **Email address** - provided at registration (optional for anonymous usage)
-- **Node metadata** - node name, capabilities, supported languages, and model information
-- **Reputation data** - per-node task counts, success rates, response times, and user ratings; which account requested a task and which node served it is kept for one hour so the requester can rate it
-- **Usage analytics** - request counts, response times, and error rates (aggregate metrics, not content)
+GemmaNet does not run a model of its own: the coordinator forwards each
+request (its content and parameters) to **one node** that offers the requested
+capability, and relays that node's answer back to you.
 
-## 3. What We Do NOT Collect
+- **Official nodes** are run by us, on our server. They process requests in
+  memory and do not store their content.
+- **Community nodes** are run by independent operators: anyone with an API key
+  can connect one. **The operator of the node that serves your request can see
+  its content and the result.** Community operators are not bound by this
+  policy and may log or keep what they process.
 
-- **Request or response content** - we route data between clients and nodes but do not store the content of requests or responses
-- **Personal conversations or AI outputs** - the actual text processed by nodes is not logged or retained by the platform
-- **Model weights or training data** - we have no access to models running on operator nodes
+To keep a request on official nodes, ask for it: `"trust": "official"` in the
+request body (or the `X-GemmaNet-Trust: official` header; `trust="official"` in
+the Python SDK; `extra_body={"trust": "official"}` with the OpenAI SDK). If no
+official node can take the request, it fails instead of going to a community
+node. The dashboard shows each node's tier. Without this option, any node
+may serve a request.
 
-## 4. How We Use Your Data
+## 3. What We Collect
 
-- **Routing optimization** - to match requests with the best available nodes
-- **Service improvement** - to monitor platform health, identify issues, and improve performance
-- **Account management** - to manage your account and API access
-- **Node reputation** - to rank nodes by reliability and quality when routing requests
+- **Account**: your API key, stored only as a SHA-256 hash; the email address
+  you optionally give at registration; when the key was created and last used.
+- **Nodes**: name, capabilities, languages, model information and tier of each
+  node you connect, and the list of node ids your account has registered (so
+  deleting the account can find them).
+- **Reputation**: per node, the number of tasks, success rate, response times and
+  user ratings. Which account requested a task and which node served it is kept
+  for one hour, so the requester can rate it.
+- **Usage**: the number of completed tasks per day (a single counter).
+- **Feedback**: the messages you send us and the optional email address.
+- **Forum**: posts, replies and the usernames you choose; these are public. For
+  votes we store a keyed hash of your IP address (not the address itself) for
+  30 days, which allows one vote per visitor and post. Rate limits hold IP
+  addresses in memory for up to one hour.
+- **Server logs**: every HTTP request to the coordinator is logged with the
+  client IP address, time, method, path and status code. The logs are rotated
+  by size (at most 3 × 20 MB per service), so older entries are overwritten;
+  they are used only to run and protect the service.
 
-## 5. Data Storage and Security
+## 4. What We Do Not Store
 
-Your data is stored on secured servers with encryption at rest and in transit. We implement industry-standard security measures to protect against unauthorized access, alteration, or destruction of data.
+- **Request and response content**: the coordinator passes it between you and
+  the serving node in memory and does not log or store it. (For what the
+  serving node may do, see section 2.)
+- **Tracking data**: we use no analytics, advertising or tracking tools.
 
-## 6. Data Sharing
+## 5. How We Use Your Data
 
-We do not sell your personal data to third parties. We may share anonymized, aggregate statistics about platform usage. We may disclose information if required by law or to protect the rights and safety of our users and platform.
+- **Routing**: to match requests with suitable, reliable nodes
+- **Reputation**: to rank nodes by reliability and quality
+- **Account management**: to authenticate your API key and run your nodes
+- **Operations and security**: to monitor the platform, fix problems and fend off abuse
 
-## 7. Data Retention
+## 6. Where Data Is Stored
 
-Account data is retained while your account is active. Upon account deletion, we will remove your personal data within 30 days. Aggregate node reputation statistics may be retained for routing and platform analytics.
+The coordinator and its databases run on our server at Google Cloud. All
+traffic to gemmanet.net passes through Cloudflare, which also hosts the
+website and documentation; Cloudflare processes requests under its own privacy
+policy. API keys are stored only as hashes.
 
-## 8. Your Rights
+## 7. Data Sharing
+
+We do not sell your data. Besides the node that serves each request (section
+2) and the providers named in section 6, we share data only if required by law
+or to protect the rights and safety of our users and platform. We may publish
+aggregate statistics that identify no one.
+
+## 8. Data Retention and Account Deletion
+
+Account data is kept until you delete the account. You can do that yourself at
+any time, with the API key:
+
+```bash
+curl -X DELETE https://api.gemmanet.net/api/v1/account -H "Authorization: Bearer $API_KEY"
+```
+
+(or `client.delete_account()` in the Python SDK). This immediately deletes all
+API keys of the account and the email address, the feedback sent with the key,
+and the reputation and benchmark data of the account's nodes, and disconnects
+its nodes. The one-hour task records expire on their own. Copies in server
+backups disappear as the backups roll over, within 30 days.
+
+Forum posts are not linked to accounts; to have one removed, write to us.
+Server logs and forum vote hashes are kept as described in section 3; the daily
+task counter is aggregate and kept.
+
+## 9. Your Rights
 
 You may:
 
-- **Request access** to your personal data
-- **Request export** of your data in a portable format
-- **Request deletion** of your account and associated data
+- **Delete** your account and associated data (section 8)
+- **Request access** to your personal data, or an **export** in a portable format
+- **Request correction** or deletion of anything else we hold about you
 - **Opt out** of non-essential communications
 
-To exercise these rights, contact us at **contact@gemmanet.net**.
+For anything but self-service deletion, contact us at **contact@gemmanet.net**.
 
-## 9. Cookies
+## 10. Cookies and Browser Storage
 
-We use minimal cookies for session management only. We do not use tracking cookies or third-party analytics cookies.
+We set no cookies. The dashboard keeps the API key you type into it in your
+browser's `localStorage`, on your device only, so you don't have to paste it
+again; empty the field or clear the site's data in your browser to remove it.
+Cloudflare may set cookies it needs for security (such as bot protection).
 
-## 10. Changes to This Policy
+## 11. Changes to This Policy
 
-We may update this Privacy Policy from time to time. We will notify registered users of material changes.
+We may update this Privacy Policy from time to time. We will notify registered
+users of material changes.
 
-## 11. Contact
+## 12. Contact
 
 For questions about this Privacy Policy, contact us at: **contact@gemmanet.net**
