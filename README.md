@@ -135,7 +135,8 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Install in development mode
-pip install -e ".[dev]"
+pip install --require-hashes -r requirements/dev.txt
+pip install --no-deps --no-build-isolation -e .
 
 # Run tests (needs PostgreSQL and Redis; see .github/workflows/test.yml)
 export DATABASE_URL=postgresql://gemmanet:gemmanet@localhost:5432/gemmanet_test

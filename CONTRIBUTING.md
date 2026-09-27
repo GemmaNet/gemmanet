@@ -15,12 +15,28 @@ contributions of all kinds: bug fixes, features, documentation, and more.
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   pip install -e ".[dev]"
+   pip install --require-hashes -r requirements/dev.txt
+   pip install --no-deps --no-build-isolation -e .
    ```
 4. **Create a branch** for your changes:
    ```bash
    git checkout -b feature/my-feature
    ```
+
+## Dependencies
+
+Python dependencies are hash-locked: `requirements/app.txt` (coordinator
+image), `requirements/dev.txt` (development and CI) and `docs/requirements.txt`
+(docs), generated from `pyproject.toml` and `docs/requirements.in`. After
+changing a dependency, regenerate them with Python 3.11:
+
+```bash
+pip install pip-tools
+scripts/lock.sh
+```
+
+Base images are pinned by digest; Dependabot proposes updates weekly, and
+CI (including a Trivy scan of every image) checks each one.
 
 ## Development Workflow
 

@@ -60,6 +60,11 @@ against the site as built for Pages.
 
    Keep `ADMIN_KEY` somewhere safe: it is the only way to read user feedback.
 
+   `docker compose build` compiles Caddy from source (patched Go libraries):
+   it needs access to `proxy.golang.org`, takes a few minutes and leaves about
+   3 GB of build cache. Once the stack runs, `docker builder prune -f`
+   reclaims it.
+
 ### A2. Cloudflare and GCP settings for the API
 
 1. **Origin certificate**: **SSL/TLS → Origin Server → Create Certificate**,
