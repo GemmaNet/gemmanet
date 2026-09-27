@@ -18,6 +18,7 @@ instead? See [the last section](#alternative-everything-on-the-vm).
 | A1–A2 Prepare VM and Cloudflare | commands in each step | fix; nothing public has changed |
 | A3 Staging on `new.gemmanet.net:8443` | `smoke_check.py --api-base` | fix; nothing public has changed |
 | A4 API live on `api.gemmanet.net` | `smoke_check.py --api-base` | delete the `api` DNS record; the main site never depended on it |
+| A5 Optional: only Cloudflare may connect | `smoke_check.py`; a direct connection is refused | `TLS_MODE=origin`, `docker compose up -d caddy` |
 | B1–B2 Pages project, preview | `smoke_check.py` against `*.pages.dev` | fix; `gemmanet.net` is untouched |
 | B3 Audit + rollback drill | checklist, timed drill | resolve before switching |
 | B4 Switch `gemmanet.net` | `smoke_check.py` against the live site | move the domain back to the old project |
@@ -161,6 +162,60 @@ The main site does not change in this step.
 Until B4 the dashboard's and forum's "Home" and "Docs" links lead to
 `gemmanet.net`, which still shows the old site.
 
+### A5. Optional: only Cloudflare may connect (Authenticated Origin Pulls)
+
+The GCP firewall (A2) lets only Cloudflare's ranges reach port 443, but any
+Cloudflare customer can point a zone of their own at this IP. With
+`TLS_MODE=origin-mtls`, Caddy also demands a TLS client certificate signed by
+your CA, which Cloudflare presents only for your hostnames.
+
+**Order matters:** once switched, Caddy refuses every connection without that
+certificate. Do steps 1 and 2 first, and switch the mode last.
+
+1. **Cloudflare**: turn on **per-hostname Authenticated Origin Pulls with
+   your own certificate** for *every* hostname in `SITE_ADDRESSES` (here
+   `api.gemmanet.net`; also `new.gemmanet.net` if staging still runs).
+   Per-hostname AOP is set up through Cloudflare's API: upload the client
+   certificate and key, then enable it for each hostname (Cloudflare docs:
+   *Authenticated Origin Pulls → Per-hostname*). Use your own certificate, not
+   Cloudflare's shared one: the shared certificate is presented for every
+   Cloudflare customer, so trusting it would let their zones in too.
+2. **The CA on the VM**: put the CA certificate that signed that client
+   certificate (the certificate only, never a key) in
+   `deploy/certs/aop-ca.pem`, and check it with the Caddy image of the commit
+   you run (`docker compose build caddy` after updating the checkout):
+
+   ```bash
+   openssl x509 -in deploy/certs/aop-ca.pem -noout -subject -dates
+   # if you have the client certificate you uploaded (certificate only):
+   openssl verify -CAfile deploy/certs/aop-ca.pem client.pem    # "client.pem: OK"
+   docker compose run --rm --no-deps -e TLS_MODE=origin-mtls caddy \
+       caddy validate --config /etc/caddy/Caddyfile               # "Valid configuration"
+   ```
+
+3. **Switch**: set `TLS_MODE=origin-mtls` in `.env`, then
+   `docker compose up -d caddy`.
+4. **Check**:
+
+   ```bash
+   # through Cloudflare: everything passes, as in A4
+   docker run --rm gemmanet-app python scripts/smoke_check.py \
+       --api-base https://api.gemmanet.net \
+       --api-key "$(grep ^GEMMANET_API_KEY .env | cut -d= -f2)"
+   # straight to the origin without a client certificate: refused
+   curl -sSk --resolve api.gemmanet.net:443:127.0.0.1 https://api.gemmanet.net/api/v1/status
+   # curl: (56) ... alert certificate required
+   ```
+
+   If the check through Cloudflare fails right after the switch (typically
+   Cloudflare error 525 or 520), Cloudflare is not presenting an accepted
+   certificate for that hostname: AOP is not enabled for it, or `aop-ca.pem`
+   is not the CA that signed it. Set `TLS_MODE=origin` and run
+   `docker compose up -d caddy` to go back, then fix steps 1–2.
+
+CI runs Caddy in this mode on every change and checks that it admits a
+certificate from the configured CA and refuses none, another CA's, or no SNI.
+
 ## Part B — the website on Cloudflare Pages
 
 ### B1. Create the Pages project
@@ -272,6 +327,7 @@ instance refuses to start.
 |------|-----|
 | Main site (B4) | Move `gemmanet.net` / `www` back to the old Pages project |
 | API (A4) | Delete the `api` DNS record, or `docker compose --profile seeds stop` |
+| Origin mTLS (A5) | `TLS_MODE=origin` in `.env`, then `docker compose up -d caddy` |
 | The VM itself | Restore the snapshot from A1 |
 
 ## Alternative: everything on the VM

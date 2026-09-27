@@ -1,3 +1,4 @@
-# Cloudflare Origin Certificate (origin.pem / origin.key) goes here; never commit it.
+# Cloudflare Origin Certificate (origin.pem / origin.key) and the Authenticated
+# Origin Pulls CA (aop-ca.pem) go here; never commit them.
 *
 !.gitignore
