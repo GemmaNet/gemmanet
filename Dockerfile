@@ -83,7 +83,7 @@ COPY website /srv/website
 COPY --from=docs /site /srv/docs
 USER caddy
 
-FROM postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54 AS db
+FROM postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d AS db
 # docker-compose.yml starts PostgreSQL as the postgres user, so the entrypoint
 # never switches users and gosu is unused. It is removed because it is built
 # with an old Go (unfixed upstream HIGH findings); starting this image as
