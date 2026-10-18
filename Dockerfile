@@ -12,7 +12,7 @@
 # Building behind a TLS-inspecting proxy? Pass its CA:
 #   docker build --secret id=ca,src=/path/to/ca.pem ...
 
-FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS app
+FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce AS app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -40,7 +40,7 @@ EXPOSE 8800
 CMD ["uvicorn", "gemmanet.coordinator.server:app", "--host", "0.0.0.0", "--port", "8800", \
      "--proxy-headers", "--forwarded-allow-ips", "*", "--ws-max-size", "4194304"]
 
-FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS docs
+FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce AS docs
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 COPY docs/requirements.txt ./docs/requirements.txt
