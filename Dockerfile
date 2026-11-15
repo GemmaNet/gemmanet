@@ -70,7 +70,7 @@ RUN --mount=type=secret,id=ca,required=false \
       --replace google.golang.org/grpc=google.golang.org/grpc@v1.84.0 \
     && /usr/local/bin/caddy version
 
-FROM caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52 AS web
+FROM caddy:2.11.8@sha256:4fcafa98afd1c2e642e353e3c5cf9ddbe892fcee14bc990e7ba2c5b78e51f9cf AS web
 # Our binary replaces the official one. It carries no file capability (the
 # official one has cap_net_bind_service, which makes the kernel refuse to run
 # it once all capabilities are dropped). Binding 80/443 as a non-root user
